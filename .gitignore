@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+.env.server
+apps/web/dist
+apps/server/uploads-temp
+data/uploads-temp
+npm-debug.log*

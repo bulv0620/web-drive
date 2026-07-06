@@ -1,0 +1,24 @@
+{
+  "name": "web-drive",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Modern WebDrive backed by SMB permissions and storage.",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w apps/web",
+    "dev:server": "npm run dev -w apps/server",
+    "server": "npm run start -w apps/server",
+    "build:web": "npm run build -w apps/web",
+    "docker": "docker compose --env-file .env -f deploy/docker/compose.yml up -d --build",
+    "docker:up": "docker compose --env-file .env -f deploy/docker/compose.yml up -d --build",
+    "docker:down": "docker compose --env-file .env -f deploy/docker/compose.yml down",
+    "start": "npm run server"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@web-drive/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./env-file": "./src/env-file.js",
+    "./http-utils": "./src/http-utils.js",
+    "./static-web": "./src/static-web.js"
+  }
+}

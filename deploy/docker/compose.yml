@@ -1,0 +1,19 @@
+services:
+  web-drive:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: web-drive
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: ${PORT:-12600}
+      UPLOAD_TEMP_DIR: /data/uploads-temp
+    ports:
+      - "${PORT:-12600}:${PORT:-12600}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${UPLOAD_TEMP_HOST_DIR:-../../data/uploads-temp}:/data/uploads-temp
