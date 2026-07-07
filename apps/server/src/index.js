@@ -21,7 +21,7 @@ function sendError(res, error, statusCode = 400) {
 }
 
 function sessionPayload(req) {
-  const session = currentSession(req);
+  const session = currentSession(req, config);
   return session ? { username: session.username } : null;
 }
 
@@ -43,15 +43,15 @@ async function login(req, res) {
     const password = String(body.password || "");
     if (!username || !password) return sendError(res, new Error("请输入 SMB 用户名和密码"), 400);
     await verifyLogin(config, { username, password });
-    createSession(res, { username, password });
-    json(res, 200, { ok: true, user: { username } });
+    const session = createSession(res, { username, password }, config);
+    json(res, 200, { ok: true, user: { username }, auth: { expiresAt: new Date(session.expiresAt).toISOString() } });
   } catch {
     sendError(res, new Error("SMB 登录失败，请检查账号、密码或共享配置"), 401);
   }
 }
 
 function logout(req, res) {
-  destroySession(req, res);
+  destroySession(req, res, config);
   json(res, 200, { ok: true });
 }
 
@@ -227,7 +227,7 @@ async function route(req, res) {
     return notFound(res);
   }
 
-  const session = requireSession(req, res);
+  const session = requireSession(req, res, config);
   if (!session) return;
 
   if (url.pathname === "/api/auth/me") return json(res, 200, { ok: true, user: { username: session.username }, config: publicConfig() });

@@ -1,4 +1,7 @@
+import crypto from "node:crypto";
 import path from "node:path";
+
+const processAuthTokenSecret = crypto.randomBytes(32).toString("hex");
 
 function numberEnv(name, fallback) {
   const value = Number(process.env[name]);
@@ -23,6 +26,8 @@ export function loadConfig() {
     uploadTempDir: path.resolve(process.env.UPLOAD_TEMP_DIR || path.resolve("uploads-temp")),
     uploadChunkSize: numberEnv("UPLOAD_CHUNK_SIZE", 8 * 1024 * 1024),
     uploadMaxBodyBytes: numberEnv("UPLOAD_MAX_BODY_BYTES", 16 * 1024 * 1024),
-    shareTokenTtlSeconds: numberEnv("SHARE_TOKEN_TTL_SECONDS", 24 * 60 * 60)
+    shareTokenTtlSeconds: numberEnv("SHARE_TOKEN_TTL_SECONDS", 24 * 60 * 60),
+    authTokenTtlSeconds: numberEnv("AUTH_TOKEN_TTL_SECONDS", 7 * 24 * 60 * 60),
+    authTokenSecret: process.env.AUTH_TOKEN_SECRET || processAuthTokenSecret
   };
 }

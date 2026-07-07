@@ -11,6 +11,8 @@
   "scripts": {
     "dev:web": "npm run dev -w apps/web",
     "dev:server": "npm run dev -w apps/server",
+    "dev:mock": "npm run dev -w apps/mock",
+    "mock": "npm run start -w apps/mock",
     "server": "npm run start -w apps/server",
     "build:web": "npm run build -w apps/web",
     "docker": "docker compose --env-file .env -f deploy/docker/compose.yml up -d --build",

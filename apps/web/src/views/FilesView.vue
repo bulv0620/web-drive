@@ -1,6 +1,6 @@
 <template>
   <AppShell title="我的网盘" :subtitle="currentPath">
-    <section class="panel file-panel" @dragenter.prevent="dragging = true" @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false" @drop.prevent="handleDrop">
+    <section class="panel file-panel">
       <div class="breadcrumb-row">
         <el-button :icon="ArrowLeft" :disabled="currentPath === '/'" circle @click="goUp" aria-label="返回上级" />
         <el-breadcrumb separator="/">
@@ -11,123 +11,160 @@
             <a href="#" @click.prevent="openPath(part.path)">{{ part.name }}</a>
           </el-breadcrumb-item>
         </el-breadcrumb>
-      </div>
-
-      <div class="simple-toolbar">
-        <el-input v-model="query" clearable placeholder="搜索" class="search-input" :prefix-icon="Search" @keyup.enter="loadFiles" @clear="loadFiles" />
-        <div class="simple-actions">
-          <el-button :icon="FolderAdd" @click="folderDialog = true">新建文件夹</el-button>
+        <div class="breadcrumb-actions">
+          <el-button :icon="FolderPlus" @click="promptCreateFolder">新建文件夹</el-button>
           <el-button type="primary" :icon="Upload" @click="fileInput?.click()">上传</el-button>
-          <el-dropdown trigger="click">
-            <el-button :icon="MoreFilled" circle aria-label="更多操作" />
+          <el-dropdown trigger="click" :show-arrow="false" popper-class="drive-dropdown-popper">
+            <el-button :icon="MoreHorizontal" circle aria-label="更多操作" />
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item @click="folderInput?.click()">上传文件夹</el-dropdown-item>
-                <el-dropdown-item @click="loadFiles">刷新</el-dropdown-item>
-                <el-dropdown-item @click="toggleView">{{ viewMode === "list" ? "网格视图" : "列表视图" }}</el-dropdown-item>
+                <el-dropdown-item :icon="FolderUp" @click="folderInput?.click()">上传文件夹</el-dropdown-item>
+                <el-dropdown-item :icon="RefreshCw" @click="loadFiles">刷新</el-dropdown-item>
+                <el-dropdown-item :icon="viewMode === 'list' ? LayoutGrid : LayoutList" @click="toggleView">{{ viewMode === "list" ? "网格视图" : "列表视图" }}</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-dropdown trigger="click" class="breadcrumb-user-menu" :show-arrow="false" popper-class="drive-dropdown-popper">
+            <button class="account-trigger" type="button" :aria-label="`${accountName} 菜单`">
+              <span class="account-name">{{ accountName }}</span>
+              <span class="avatar" aria-hidden="true">{{ initial }}</span>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item :icon="LogOut" :disabled="loggingOut" @click="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
         </div>
       </div>
 
+      <div class="simple-toolbar">
+        <el-input v-model="query" clearable placeholder="搜索" class="search-input" :prefix-icon="Search" @keyup.enter="loadFiles" @clear="loadFiles" />
+      </div>
+
       <input ref="fileInput" type="file" multiple hidden @change="handleFileInput" />
       <input ref="folderInput" type="file" multiple hidden webkitdirectory directory @change="handleFileInput" />
 
-      <div v-if="dragging" class="drop-hint">松开后上传到当前目录</div>
-
-      <el-alert v-if="selectedRows.length" :title="`已选择 ${selectedRows.length} 项`" type="info" show-icon :closable="false" class="block-gap">
-        <div class="toolbar" style="margin-top: 10px;">
-          <el-button size="small" :icon="Download" @click="downloadSelected">下载</el-button>
-          <el-button size="small" type="danger" :icon="Delete" @click="deleteSelected">删除</el-button>
-        </div>
-      </el-alert>
-
-      <div v-if="tasks.length" class="inline-tasks block-gap">
-        <div v-for="task in tasks" :key="task.id" class="inline-task">
-          <span>{{ task.name }}</span>
-          <el-progress :percentage="Math.round(task.progress)" :status="task.status === 'error' ? 'exception' : task.status === 'done' ? 'success' : undefined" />
-        </div>
-      </div>
-
-      <el-table
-        v-if="viewMode === 'list'"
-        ref="tableRef"
-        v-loading="loading"
-        class="file-table"
-        :data="items"
-        row-key="path"
-        @selection-change="selectedRows = $event"
-        @row-dblclick="openItem"
-      >
-        <el-table-column type="selection" width="44" />
-        <el-table-column label="名称" min-width="300">
-          <template #default="{ row }">
-            <button class="file-name" type="button" @click="openItem(row)">
-              <span class="file-icon" :class="{ folder: row.type === 'folder' }">
-                <el-icon><Folder v-if="row.type === 'folder'" /><Document v-else /></el-icon>
-              </span>
-              <span>{{ row.name }}</span>
-            </button>
-          </template>
-        </el-table-column>
-        <el-table-column label="大小" width="120">
-          <template #default="{ row }">{{ row.type === "folder" ? "-" : formatSize(row.size) }}</template>
-        </el-table-column>
-        <el-table-column label="修改时间" min-width="170">
-          <template #default="{ row }">{{ formatTime(row.modifiedAt) }}</template>
-        </el-table-column>
-        <el-table-column label="" width="88" fixed="right">
-          <template #default="{ row }">
-            <el-dropdown trigger="click">
-              <el-button size="small" text>操作</el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item @click="openItem(row)">打开</el-dropdown-item>
-                  <el-dropdown-item v-if="row.type === 'file'" @click="download(row)">下载</el-dropdown-item>
-                  <el-dropdown-item v-if="canPreview(row)" @click="preview(row)">预览</el-dropdown-item>
-                  <el-dropdown-item @click="promptRename(row)">重命名</el-dropdown-item>
-                  <el-dropdown-item @click="promptMove(row)">移动</el-dropdown-item>
-                  <el-dropdown-item v-if="row.type === 'file'" @click="promptCopy(row)">复制</el-dropdown-item>
-                  <el-dropdown-item v-if="row.type === 'file'" @click="share(row)">分享</el-dropdown-item>
-                  <el-dropdown-item divided @click="deleteOne(row)">删除</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <div v-else v-loading="loading" class="file-grid">
-        <div v-for="item in items" :key="item.path" class="file-card" :class="{ selected: selectedMap.has(item.path) }" @dblclick="openItem(item)" @click="toggleGridSelection(item)">
-          <div class="file-card-head">
-            <span class="file-icon" :class="{ folder: item.type === 'folder' }">
-              <el-icon><Folder v-if="item.type === 'folder'" /><Document v-else /></el-icon>
-            </span>
-            <el-checkbox :model-value="selectedMap.has(item.path)" @click.stop @change="toggleGridSelection(item)" />
+      <Transition name="selection-bar-slide">
+        <div v-if="selectedRows.length" class="selection-bar">
+          <span class="selection-count">已选择 {{ selectedRows.length }} 项</span>
+          <div class="selection-actions">
+            <el-button text type="primary" @click="downloadSelected">下载</el-button>
+            <el-button text type="danger" @click="deleteSelected">删除</el-button>
           </div>
-          <div class="file-card-name">{{ item.name }}</div>
-          <div class="file-card-meta">{{ item.type === "folder" ? "文件夹" : formatSize(item.size) }}</div>
-          <div class="file-card-meta">{{ formatTime(item.modifiedAt) }}</div>
         </div>
+      </Transition>
+
+      <div
+        class="file-browser-area"
+        :class="{ dragging }"
+        @dragenter.prevent="handleDragEnter"
+        @dragover.prevent="handleDragOver"
+        @dragleave.prevent="handleDragLeave"
+        @drop.prevent="handleDrop"
+      >
+        <el-auto-resizer v-if="viewMode === 'list'" v-loading="loading" class="file-table-resizer">
+          <template #default="{ height, width }">
+            <el-table-v2
+              v-if="items.length"
+              ref="tableRef"
+              class="file-table file-table-v2"
+              :cache="8"
+              :columns="tableColumns"
+              :data="items"
+              :height="height"
+              :row-event-handlers="tableRowEventHandlers"
+              :row-height="54"
+              row-key="path"
+              :sort-by="tableSortBy"
+              :width="width"
+              @column-sort="handleTableSort"
+            />
+            <div v-else class="empty-state file-table-empty" :style="{ height: `${height}px` }">
+              <FolderOpen class="empty-state-icon" aria-hidden="true" />
+              <div class="empty-state-title">当前目录为空</div>
+            </div>
+          </template>
+        </el-auto-resizer>
+
+        <el-scrollbar v-else v-loading="loading" class="file-grid-scrollbar">
+          <div class="file-grid" :class="{ empty: !items.length }">
+            <div v-if="!loading && items.length === 0" class="empty-state">
+              <FolderOpen class="empty-state-icon" aria-hidden="true" />
+              <div class="empty-state-title">当前目录为空</div>
+            </div>
+            <div v-for="item in items" :key="item.path" class="file-card" :class="{ selected: selectedMap.has(item.path) }" @dblclick="openItem(item)" @click="toggleGridSelection(item)">
+              <div class="file-card-head">
+                <span class="file-icon" :class="fileTypeClass(item)">
+                  <el-icon><component :is="fileIconFor(item)" /></el-icon>
+                </span>
+                <el-checkbox :model-value="selectedMap.has(item.path)" @click.stop @change="toggleGridSelection(item)" />
+              </div>
+              <div class="file-card-name">{{ item.name }}</div>
+              <div class="file-card-meta">{{ item.type === "folder" ? "文件夹" : formatSize(item.size) }}</div>
+              <div class="file-card-meta">{{ formatTime(item.modifiedAt) }}</div>
+            </div>
+          </div>
+        </el-scrollbar>
+
+        <Transition name="file-drop-overlay-fade">
+          <div v-if="dragging" class="file-drop-overlay" aria-hidden="true">
+            <div class="file-drop-message">
+              <el-icon><Upload /></el-icon>
+              <span>释放上传</span>
+            </div>
+          </div>
+        </Transition>
       </div>
 
-      <el-empty v-if="!loading && items.length === 0" description="当前目录没有文件" />
+      <Transition name="upload-widget-fade">
+        <div v-if="tasks.length" class="upload-widget" :class="{ open: uploadPanelOpen }">
+          <Transition name="upload-panel-pop">
+            <div v-if="uploadPanelOpen" class="upload-panel">
+              <div class="upload-panel-head">
+                <div>
+                  <div class="upload-panel-title">上传任务</div>
+                  <div class="upload-panel-subtitle">{{ uploadSummary }}</div>
+                </div>
+                <el-button v-if="hasFinishedTasks" text size="small" @click="clearFinishedTasks">清理完成</el-button>
+              </div>
+
+              <el-scrollbar class="upload-task-scrollbar" max-height="min(270px, calc(100dvh - 280px))">
+                <div class="upload-task-list">
+                  <div v-for="task in tasks" :key="task.id" class="upload-task" :class="`is-${task.status}`">
+                    <div class="upload-task-row">
+                      <span class="upload-task-name">{{ task.name }}</span>
+                      <span class="upload-task-status">{{ uploadStatusText(task) }}</span>
+                    </div>
+                    <el-progress
+                      :percentage="Math.round(task.progress)"
+                      :status="uploadProgressStatus(task)"
+                      :stroke-width="6"
+                      :show-text="false"
+                    />
+                  </div>
+                </div>
+              </el-scrollbar>
+            </div>
+          </Transition>
+
+          <button
+            class="upload-orb"
+            type="button"
+            :aria-expanded="uploadPanelOpen"
+            aria-label="上传任务"
+            :style="{ '--upload-progress': `${overallUploadProgress * 3.6}deg` }"
+            @click="uploadPanelOpen = !uploadPanelOpen"
+          >
+            <el-icon><Upload /></el-icon>
+            <span v-if="uploadOrbBadge" class="upload-orb-badge">{{ uploadOrbBadge }}</span>
+          </button>
+        </div>
+      </Transition>
+
     </section>
 
-    <el-dialog v-model="folderDialog" title="新建文件夹">
-      <el-form label-position="top" @submit.prevent="createFolder">
-        <el-form-item label="文件夹名称">
-          <el-input v-model="folderName" autofocus />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="folderDialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="createFolder">创建</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="shareDialog" title="分享链接">
+    <el-dialog v-model="shareDialog" title="分享链接" width="min(460px, calc(100vw - 32px))">
       <div class="share-box">
         <el-input v-model="shareUrl" readonly />
         <el-button type="primary" @click="copyShareUrl">复制链接</el-button>
@@ -137,27 +174,87 @@
     <el-dialog v-model="previewDialog" :title="previewItem?.name || '预览'" width="min(900px, calc(100vw - 32px))">
       <img v-if="previewUrl" class="preview-image" :src="previewUrl" :alt="previewItem?.name || 'preview'" />
     </el-dialog>
+
+    <Teleport to="body">
+      <div v-if="contextMenu.visible" class="context-menu-layer" @mousedown="closeContextMenu" @contextmenu.prevent="closeContextMenu">
+        <div
+          class="drive-dropdown-popper drive-context-menu el-popper"
+          :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+          role="menu"
+          @mousedown.stop
+          @contextmenu.prevent.stop
+        >
+          <div class="el-dropdown-menu">
+            <button class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('open')">
+              <el-icon><FolderOpen /></el-icon><span>打开</span>
+            </button>
+            <button v-if="contextMenu.item?.type === 'file'" class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('download')">
+              <el-icon><Download /></el-icon><span>下载</span>
+            </button>
+            <button v-if="contextMenu.item && canPreview(contextMenu.item)" class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('preview')">
+              <el-icon><Eye /></el-icon><span>预览</span>
+            </button>
+            <button class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('rename')">
+              <el-icon><Pencil /></el-icon><span>重命名</span>
+            </button>
+            <button class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('move')">
+              <el-icon><Move /></el-icon><span>移动</span>
+            </button>
+            <button v-if="contextMenu.item?.type === 'file'" class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('copy')">
+              <el-icon><Copy /></el-icon><span>复制</span>
+            </button>
+            <button v-if="contextMenu.item?.type === 'file'" class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('share')">
+              <el-icon><Share2 /></el-icon><span>分享</span>
+            </button>
+            <button class="el-dropdown-menu__item el-dropdown-menu__item--divided context-menu-item dropdown-danger" type="button" role="menuitem" @click="runContextAction('delete')">
+              <el-icon><Trash2 /></el-icon><span>删除</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </AppShell>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { computed, h, onMounted, reactive, ref, watch } from "vue";
+import { useRouter } from "vue-router";
+import { ElButton, ElCheckbox, ElDropdown, ElDropdownItem, ElDropdownMenu, ElIcon, ElMessage, ElMessageBox } from "element-plus";
 import {
   ArrowLeft,
-  Delete,
-  Document,
+  Copy,
   Download,
+  Eye,
+  FileArchive,
+  FileAudio,
+  FileCode,
+  FileText,
+  FileImage,
+  FileQuestion,
+  FileSpreadsheet,
+  FileType,
+  FileVideo,
   Folder,
-  FolderAdd,
-  MoreFilled,
+  FolderOpen,
+  FolderPlus,
+  FolderUp,
+  LayoutGrid,
+  LayoutList,
+  LogOut,
+  MoreHorizontal,
+  Move,
+  Pencil,
+  RefreshCw,
   Search,
+  Share2,
+  Trash2,
   Upload
-} from "@element-plus/icons-vue";
+} from "@lucide/vue";
 import { api } from "../api/client.js";
-import { state } from "../store.js";
+import { applyAuth, state } from "../store.js";
 import AppShell from "./AppShell.vue";
 
+const router = useRouter();
 const currentPath = ref("/");
 const items = ref([]);
 const loading = ref(false);
@@ -167,25 +264,110 @@ const order = ref("asc");
 const viewMode = ref(localStorage.getItem("web-drive-view") || "list");
 const selectedRows = ref([]);
 const tableRef = ref(null);
+const rowDropdownRefs = new Map();
 const fileInput = ref(null);
 const folderInput = ref(null);
 const dragging = ref(false);
 const tasks = reactive([]);
-const folderDialog = ref(false);
-const folderName = ref("");
-const saving = ref(false);
+const uploadPanelOpen = ref(false);
+const activeUploads = ref(0);
 const shareDialog = ref(false);
 const shareUrl = ref("");
 const previewDialog = ref(false);
 const previewItem = ref(null);
 const previewUrl = ref("");
+const loggingOut = ref(false);
+const contextMenu = reactive({ visible: false, x: 0, y: 0, item: null });
 const chunkSize = computed(() => Number(state.config.uploadChunkSize || 8 * 1024 * 1024));
+const accountName = computed(() => state.user?.username || "用户");
+const initial = computed(() => accountName.value.slice(0, 1).toUpperCase());
+const uploadConcurrency = 3;
+const uploadQueue = [];
+let uploadRefreshTimer = null;
 
 const breadcrumbParts = computed(() => {
   const parts = currentPath.value.split("/").filter(Boolean);
   return parts.map((name, index) => ({ name, path: `/${parts.slice(0, index + 1).join("/")}` }));
 });
 const selectedMap = computed(() => new Map(selectedRows.value.map((item) => [item.path, item])));
+const allListSelected = computed(() => items.value.length > 0 && items.value.every((item) => selectedMap.value.has(item.path)));
+const someListSelected = computed(() => selectedRows.value.length > 0 && !allListSelected.value);
+const tableSortBy = computed(() => ({ key: sort.value, order: order.value }));
+const uploadActiveCount = computed(() => tasks.filter((task) => task.status === "uploading" || task.status === "pending").length);
+const uploadDoneCount = computed(() => tasks.filter((task) => task.status === "done").length);
+const uploadErrorCount = computed(() => tasks.filter((task) => task.status === "error").length);
+const hasFinishedTasks = computed(() => tasks.some((task) => task.status === "done" || task.status === "error"));
+const overallUploadProgress = computed(() => {
+  if (!tasks.length) return 0;
+  return tasks.reduce((sum, task) => sum + Number(task.progress || 0), 0) / tasks.length;
+});
+const uploadOrbBadge = computed(() => uploadActiveCount.value);
+const uploadSummary = computed(() => {
+  const parts = [];
+  if (uploadActiveCount.value) parts.push(`${uploadActiveCount.value} 个进行中`);
+  if (uploadDoneCount.value) parts.push(`${uploadDoneCount.value} 个完成`);
+  if (uploadErrorCount.value) parts.push(`${uploadErrorCount.value} 个失败`);
+  return parts.join(" · ") || "暂无任务";
+});
+const sortableTableKeys = new Set(["name", "size", "modifiedAt"]);
+const tableRowEventHandlers = {
+  onDblclick: ({ rowData, event }) => handleVirtualRowDblclick(rowData, event),
+  onContextmenu: ({ rowData, event }) => openRowContextMenu(rowData, null, event)
+};
+const tableColumns = computed(() => [
+  {
+    key: "selection",
+    dataKey: "selection",
+    width: 44,
+    align: "center",
+    headerCellRenderer: () =>
+      h(ElCheckbox, {
+        modelValue: allListSelected.value,
+        indeterminate: someListSelected.value,
+        onClick: (event) => event.stopPropagation(),
+        onChange: toggleAllListSelection
+      }),
+    cellRenderer: ({ rowData }) =>
+      h(ElCheckbox, {
+        modelValue: selectedMap.value.has(rowData.path),
+        onClick: (event) => event.stopPropagation(),
+        onChange: () => toggleGridSelection(rowData)
+      })
+  },
+  {
+    key: "name",
+    dataKey: "name",
+    title: "名称",
+    width: 460,
+    flexGrow: 1,
+    sortable: true,
+    cellRenderer: ({ rowData }) => renderFileNameCell(rowData)
+  },
+  {
+    key: "size",
+    dataKey: "size",
+    title: "大小",
+    width: 120,
+    sortable: true,
+    cellRenderer: ({ rowData }) => (rowData.type === "folder" ? "-" : formatSize(rowData.size))
+  },
+  {
+    key: "modifiedAt",
+    dataKey: "modifiedAt",
+    title: "修改时间",
+    width: 190,
+    sortable: true,
+    cellRenderer: ({ rowData }) => formatTime(rowData.modifiedAt)
+  },
+  {
+    key: "actions",
+    dataKey: "actions",
+    title: "",
+    width: 104,
+    align: "center",
+    cellRenderer: ({ rowData }) => renderActionMenu(rowData)
+  }
+]);
 
 watch(viewMode, (value) => localStorage.setItem("web-drive-view", value));
 watch(query, () => {
@@ -193,21 +375,38 @@ watch(query, () => {
   watch.timer = setTimeout(loadFiles, 250);
 });
 
-onMounted(loadFiles);
+onMounted(() => {
+  loadFiles();
+});
 
-async function loadFiles() {
-  loading.value = true;
+async function loadFiles(options = {}) {
+  const { preserveSelection = false, resetScroll = true, silent = false } = options;
+  if (!silent) loading.value = true;
   try {
     const data = await api.files({ path: currentPath.value, q: query.value, sort: sort.value, order: order.value });
     currentPath.value = data.path;
     items.value = data.items;
     state.config = data.config || state.config;
-    selectedRows.value = [];
-    tableRef.value?.clearSelection?.();
+    if (!preserveSelection) selectedRows.value = [];
+    if (resetScroll) tableRef.value?.scrollToTop?.(0);
   } catch (err) {
     ElMessage.error(err.message || "读取目录失败");
   } finally {
-    loading.value = false;
+    if (!silent) loading.value = false;
+  }
+}
+
+async function logout() {
+  if (loggingOut.value) return;
+  loggingOut.value = true;
+  try {
+    await api.logout();
+    applyAuth(null);
+    router.push("/login");
+  } catch (err) {
+    ElMessage.error(err.message || "退出失败");
+  } finally {
+    loggingOut.value = false;
   }
 }
 
@@ -228,8 +427,187 @@ function openItem(item) {
   else download(item);
 }
 
+function handleVirtualRowDblclick(row, event) {
+  if (event?.target?.closest?.(".el-checkbox, .el-dropdown, .el-button")) return;
+  openItem(row);
+}
+
+function handleRowDblclick(row, column, event) {
+  if (column?.type === "selection" || event?.target?.closest?.(".el-checkbox")) return;
+  openItem(row);
+}
+
+function toggleAllListSelection(value) {
+  selectedRows.value = value ? [...items.value] : [];
+}
+
+function handleTableSort({ key, order: nextOrder }) {
+  const nextKey = String(key || "");
+  if (!sortableTableKeys.has(nextKey)) return;
+  const changedColumn = nextKey !== sort.value;
+  sort.value = nextKey;
+  order.value = changedColumn ? "asc" : nextOrder === "desc" ? "desc" : "asc";
+  selectedRows.value = [];
+  tableRef.value?.scrollToTop?.(0);
+  loadFiles();
+}
+
+function renderFileNameCell(row) {
+  return h(
+    "button",
+    {
+      class: "file-name",
+      type: "button",
+      onClick: (event) => {
+        event.stopPropagation();
+        openItem(row);
+      }
+    },
+    [
+      h("span", { class: ["file-icon", ...fileTypeClass(row)] }, [h(ElIcon, null, { default: () => h(fileIconFor(row)) })]),
+      h("span", null, row.name)
+    ]
+  );
+}
+
+function renderActionMenu(row) {
+  const actions = [
+    { label: "打开", icon: FolderOpen, handler: () => openItem(row) },
+    row.type === "file" && { label: "下载", icon: Download, handler: () => download(row) },
+    canPreview(row) && { label: "预览", icon: Eye, handler: () => preview(row) },
+    { label: "重命名", icon: Pencil, handler: () => promptRename(row) },
+    { label: "移动", icon: Move, handler: () => promptMove(row) },
+    row.type === "file" && { label: "复制", icon: Copy, handler: () => promptCopy(row) },
+    row.type === "file" && { label: "分享", icon: Share2, handler: () => share(row) },
+    { label: "删除", icon: Trash2, class: "dropdown-danger", divided: true, handler: () => deleteOne(row) }
+  ].filter(Boolean);
+
+  return h(
+    ElDropdown,
+    {
+      ref: (el) => setRowDropdownRef(row.path, el),
+      trigger: "click",
+      showArrow: false,
+      popperClass: "drive-dropdown-popper",
+      onVisibleChange: (visible) => {
+        if (visible) closeContextMenu();
+      },
+      onClick: (event) => event.stopPropagation()
+    },
+    {
+      default: () =>
+        h(
+          ElButton,
+          {
+            size: "small",
+            text: true,
+            onClick: (event) => {
+              event.stopPropagation();
+              closeContextMenu();
+            }
+          },
+          { default: () => "操作" }
+        ),
+      dropdown: () =>
+        h(
+          ElDropdownMenu,
+          null,
+          {
+            default: () =>
+              actions.map((action) =>
+                h(
+                  ElDropdownItem,
+                  {
+                    icon: action.icon,
+                    class: action.class,
+                    divided: action.divided,
+                    onClick: action.handler
+                  },
+                  { default: () => action.label }
+                )
+              )
+          }
+        )
+    }
+  );
+}
+
+function setRowDropdownRef(path, el) {
+  if (el) rowDropdownRefs.set(path, el);
+  else rowDropdownRefs.delete(path);
+}
+
+function closeRowDropdowns() {
+  for (const dropdown of rowDropdownRefs.values()) dropdown?.handleClose?.();
+}
+
+function openRowContextMenu(row, column, event) {
+  event.preventDefault();
+  closeRowDropdowns();
+  const menuWidth = 164;
+  const itemCount = 4 + (row.type === "file" ? 3 : 0) + (canPreview(row) ? 1 : 0);
+  const menuHeight = Math.min(360, 14 + itemCount * 40);
+  contextMenu.item = row;
+  contextMenu.x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
+  contextMenu.y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
+  contextMenu.visible = true;
+}
+
+function closeContextMenu() {
+  contextMenu.visible = false;
+  contextMenu.item = null;
+}
+
+async function runContextAction(action) {
+  const item = contextMenu.item;
+  if (!item) return;
+  closeContextMenu();
+  if (action === "open") return openItem(item);
+  if (action === "download") return download(item);
+  if (action === "preview") return preview(item);
+  if (action === "rename") return promptRename(item);
+  if (action === "move") return promptMove(item);
+  if (action === "copy") return promptCopy(item);
+  if (action === "share") return share(item);
+  if (action === "delete") return deleteOne(item);
+}
+
 function canPreview(item) {
   return item.type === "file" && /^image\//.test(item.mime || "");
+}
+
+function fileKind(item) {
+  if (item.type === "folder") return "folder";
+  const mime = String(item.mime || "").toLowerCase();
+  const ext = item.name.includes(".") ? item.name.split(".").pop().toLowerCase() : "";
+  if (mime.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"].includes(ext)) return "image";
+  if (mime.startsWith("video/") || ["mp4", "webm", "mov", "mkv", "avi", "m4v"].includes(ext)) return "video";
+  if (mime.startsWith("audio/") || ["mp3", "wav", "flac", "aac", "ogg", "m4a"].includes(ext)) return "audio";
+  if (["zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz"].includes(ext)) return "archive";
+  if (mime === "application/pdf" || ext === "pdf") return "pdf";
+  if (["xls", "xlsx", "csv", "ods", "numbers"].includes(ext)) return "spreadsheet";
+  if (["js", "ts", "jsx", "tsx", "vue", "html", "css", "scss", "json", "xml", "yml", "yaml", "md", "py", "go", "rs", "java", "c", "cpp", "cs", "php", "sh", "ps1"].includes(ext)) return "code";
+  if (mime.startsWith("text/") || ["txt", "log", "rtf"].includes(ext)) return "text";
+  return "unknown";
+}
+
+function fileIconFor(item) {
+  return {
+    folder: Folder,
+    image: FileImage,
+    video: FileVideo,
+    audio: FileAudio,
+    archive: FileArchive,
+    pdf: FileType,
+    spreadsheet: FileSpreadsheet,
+    code: FileCode,
+    text: FileText,
+    unknown: FileQuestion
+  }[fileKind(item)];
+}
+
+function fileTypeClass(item) {
+  return [fileKind(item)];
 }
 
 function toggleView() {
@@ -267,19 +645,16 @@ function preview(item) {
   previewDialog.value = true;
 }
 
-async function createFolder() {
-  if (!folderName.value.trim()) return;
-  saving.value = true;
+async function promptCreateFolder() {
   try {
-    await api.createFolder({ parent: currentPath.value, name: folderName.value.trim() });
-    folderDialog.value = false;
-    folderName.value = "";
+    const { value } = await ElMessageBox.prompt("输入文件夹名称", "新建文件夹", {
+      inputValidator: (value) => Boolean(value?.trim()) || "文件夹名称不能为空"
+    });
+    await api.createFolder({ parent: currentPath.value, name: value.trim() });
     ElMessage.success("文件夹已创建");
     await loadFiles();
   } catch (err) {
-    ElMessage.error(err.message || "创建失败");
-  } finally {
-    saving.value = false;
+    if (err !== "cancel") ElMessage.error(err.message || "创建失败");
   }
 }
 
@@ -354,9 +729,42 @@ async function copyShareUrl() {
   ElMessage.success("分享链接已复制");
 }
 
-function handleDrop(event) {
+function isFileDrag(event) {
+  return [...(event.dataTransfer?.types || [])].includes("Files");
+}
+
+function handleDragEnter(event) {
+  if (!isFileDrag(event)) return;
+  dragging.value = true;
+}
+
+function handleDragOver(event) {
+  if (!isFileDrag(event)) return;
+  event.dataTransfer.dropEffect = "copy";
+  dragging.value = true;
+}
+
+function handleDragLeave(event) {
+  if (event.currentTarget?.contains?.(event.relatedTarget)) return;
   dragging.value = false;
-  uploadFiles([...(event.dataTransfer?.files || [])]);
+}
+
+async function handleDrop(event) {
+  dragging.value = false;
+  try {
+    const { files, folders } = await collectDroppedItems(event.dataTransfer);
+    await createDroppedFolders(folders);
+    if (files.length) {
+      uploadFiles(files);
+    } else if (folders.length) {
+      ElMessage.success("文件夹已创建");
+      loadFiles({ preserveSelection: true, resetScroll: false, silent: true });
+    } else {
+      ElMessage.warning("没有可上传的文件");
+    }
+  } catch (err) {
+    ElMessage.error(err.message || "读取拖拽文件夹失败");
+  }
 }
 
 function handleFileInput(event) {
@@ -366,19 +774,129 @@ function handleFileInput(event) {
 }
 
 async function uploadFiles(files) {
-  for (const file of files) await uploadOne(file);
-  await loadFiles();
+  const picked = [...files].map(toUploadItem).filter(Boolean);
+  if (!picked.length) return;
+  uploadPanelOpen.value = true;
+  for (const item of picked) {
+    const task = createUploadTask(item);
+    tasks.unshift(task);
+    uploadQueue.push({ file: item.file, task });
+  }
+  runUploadQueue();
 }
 
-async function uploadOne(file) {
-  const relative = file.webkitRelativePath || file.name;
+function toUploadItem(item) {
+  if (!item) return null;
+  if (item.file) {
+    return {
+      file: item.file,
+      relativePath: normalizeRelativePath(item.relativePath || item.file.webkitRelativePath || item.file.name)
+    };
+  }
+  return {
+    file: item,
+    relativePath: normalizeRelativePath(item.webkitRelativePath || item.name)
+  };
+}
+
+function normalizeRelativePath(path) {
+  return String(path || "").replace(/\\/g, "/").split("/").filter(Boolean).join("/");
+}
+
+function createUploadTask(item) {
+  const relative = item.relativePath || item.file.name;
   const parts = relative.split("/").filter(Boolean);
-  const name = parts.pop() || file.name;
+  const name = parts.pop() || item.file.name;
   const directory = parts.length ? `${currentPath.value.replace(/\/$/, "")}/${parts.join("/")}` : currentPath.value;
-  const task = reactive({ id: `${Date.now()}-${Math.random()}`, name: relative, progress: 0, status: "uploading" });
-  tasks.unshift(task);
+  return reactive({
+    id: `${Date.now()}-${Math.random()}`,
+    directory,
+    fileName: name,
+    name: relative,
+    progress: 0,
+    status: "pending"
+  });
+}
+
+async function collectDroppedItems(dataTransfer) {
+  const transferItems = [...(dataTransfer?.items || [])];
+  const entries = transferItems
+    .filter((item) => item.kind === "file")
+    .map((item) => item.webkitGetAsEntry?.())
+    .filter(Boolean);
+
+  if (!entries.length) return { files: [...(dataTransfer?.files || [])], folders: [] };
+
+  const result = { files: [], folders: [] };
+  await Promise.all(entries.map((entry) => readEntryFiles(entry, "", result)));
+  return result;
+}
+
+async function readEntryFiles(entry, parentPath, result) {
+  const entryPath = parentPath ? `${parentPath}/${entry.name}` : entry.name;
+  if (entry.isFile) {
+    const file = await readFileEntry(entry);
+    result.files.push({ file, relativePath: entryPath });
+    return;
+  }
+  if (!entry.isDirectory) return;
+
+  result.folders.push(entryPath);
+  const children = await readDirectoryEntries(entry);
+  await Promise.all(children.map((child) => readEntryFiles(child, entryPath, result)));
+}
+
+function readFileEntry(entry) {
+  return new Promise((resolve, reject) => {
+    entry.file(resolve, reject);
+  });
+}
+
+async function readDirectoryEntries(entry) {
+  const reader = entry.createReader();
+  const children = [];
+  while (true) {
+    const batch = await new Promise((resolve, reject) => {
+      reader.readEntries(resolve, reject);
+    });
+    if (!batch.length) break;
+    children.push(...batch);
+  }
+  return children;
+}
+
+async function createDroppedFolders(folders) {
+  const uniqueFolders = [...new Set(folders.map(normalizeRelativePath).filter(Boolean))].sort((a, b) => {
+    const depth = a.split("/").length - b.split("/").length;
+    return depth || a.localeCompare(b, "zh-Hans-CN");
+  });
+  for (const folder of uniqueFolders) {
+    const parts = folder.split("/");
+    const name = parts.pop();
+    const parent = parts.length ? `${currentPath.value.replace(/\/$/, "")}/${parts.join("/")}` : currentPath.value;
+    try {
+      await api.createFolder({ parent, name });
+    } catch (err) {
+      if (!/already exists|已存在|path already exists/i.test(err.message || "")) throw err;
+    }
+  }
+}
+
+function runUploadQueue() {
+  while (activeUploads.value < uploadConcurrency && uploadQueue.length) {
+    const next = uploadQueue.shift();
+    activeUploads.value += 1;
+    uploadOne(next.file, next.task).finally(() => {
+      activeUploads.value -= 1;
+      runUploadQueue();
+    });
+  }
+}
+
+async function uploadOne(file, task) {
+  task.status = "uploading";
   try {
-    const init = await api.initUpload({ directory, name, size: file.size, chunkSize: chunkSize.value });
+    const init = await api.initUpload({ directory: task.directory, name: task.fileName, size: file.size, chunkSize: chunkSize.value });
     const uploadId = init.task.uploadId;
     const uploaded = new Set(init.task.uploadedChunks || []);
     const totalChunks = init.task.totalChunks;
@@ -393,13 +911,37 @@ async function uploadOne(file) {
     await api.completeUpload({ uploadId });
     task.progress = 100;
     task.status = "done";
-    setTimeout(() => {
-      const index = tasks.findIndex((item) => item.id === task.id);
-      if (index !== -1) tasks.splice(index, 1);
-    }, 1800);
+    scheduleUploadRefresh();
   } catch (err) {
     task.status = "error";
     ElMessage.error(err.message || "上传失败");
   }
+}
+
+function scheduleUploadRefresh() {
+  clearTimeout(uploadRefreshTimer);
+  uploadRefreshTimer = setTimeout(() => {
+    loadFiles({ preserveSelection: true, resetScroll: false, silent: true });
+  }, 160);
+}
+
+function clearFinishedTasks() {
+  for (let index = tasks.length - 1; index >= 0; index -= 1) {
+    if (tasks[index].status === "done" || tasks[index].status === "error") tasks.splice(index, 1);
+  }
+  if (!tasks.length) uploadPanelOpen.value = false;
+}
+
+function uploadStatusText(task) {
+  if (task.status === "pending") return "等待中";
+  if (task.status === "done") return "已完成";
+  if (task.status === "error") return "失败";
+  return "上传中";
+}
+
+function uploadProgressStatus(task) {
+  if (task.status === "done") return "success";
+  if (task.status === "error") return "exception";
+  return undefined;
 }
 </script>
