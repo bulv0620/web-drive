@@ -217,8 +217,8 @@
 </template>
 
 <script setup>
-import { computed, h, markRaw, onMounted, reactive, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { computed, h, markRaw, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ElCheckbox, ElIcon, ElMessage, ElMessageBox } from "element-plus";
 import {
   ArrowLeft,
@@ -255,9 +255,11 @@ import { applyAuth, state } from "../store.js";
 import AppShell from "./AppShell.vue";
 
 const router = useRouter();
-const currentPath = ref("/");
+const route = useRoute();
+const currentPath = ref(pathFromRoute(route));
 const items = ref([]);
 const loading = ref(false);
+const hasLoadedCurrentPath = ref(false);
 const query = ref("");
 const sort = ref("name");
 const order = ref("asc");
@@ -370,13 +372,21 @@ const tableColumns = computed(() => [
 ]);
 
 watch(viewMode, (value) => localStorage.setItem("web-drive-view", value));
+watch(
+  () => route.fullPath,
+  () => {
+    if (route.name !== "files") return;
+    const nextPath = pathFromRoute(route);
+    if (nextPath === currentPath.value && hasLoadedCurrentPath.value) return;
+    currentPath.value = nextPath;
+    hasLoadedCurrentPath.value = false;
+    loadFiles();
+  },
+  { immediate: true }
+);
 watch(query, () => {
   clearTimeout(watch.timer);
   watch.timer = setTimeout(loadFiles, 250);
-});
-
-onMounted(() => {
-  loadFiles();
 });
 
 async function loadFiles(options = {}) {
@@ -384,11 +394,14 @@ async function loadFiles(options = {}) {
   if (!silent) loading.value = true;
   try {
     const data = await api.files({ path: currentPath.value, q: query.value, sort: sort.value, order: order.value });
-    currentPath.value = data.path;
+    const nextPath = normalizeDrivePath(data.path || currentPath.value);
+    currentPath.value = nextPath;
     items.value = (data.items || []).map(normalizeFileItem);
     state.config = data.config || state.config;
     if (!preserveSelection) selectedRows.value = [];
     if (resetScroll) tableRef.value?.scrollToTop?.(0);
+    hasLoadedCurrentPath.value = true;
+    if (route.name === "files" && nextPath !== pathFromRoute(route)) router.replace(fileRouteForPath(nextPath));
   } catch (err) {
     ElMessage.error(err.message || "读取目录失败");
   } finally {
@@ -411,8 +424,31 @@ async function logout() {
 }
 
 function openPath(path) {
-  currentPath.value = path || "/";
-  loadFiles();
+  const nextPath = normalizeDrivePath(path);
+  if (nextPath === currentPath.value) {
+    loadFiles();
+    return;
+  }
+  router.push(fileRouteForPath(nextPath));
+}
+
+function normalizeDrivePath(path = "/") {
+  const parts = String(path || "/")
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter(Boolean);
+  return `/${parts.join("/")}`;
+}
+
+function pathFromRoute(targetRoute) {
+  const value = targetRoute.params.drivePath;
+  const parts = Array.isArray(value) ? value : String(value || "").split("/");
+  return normalizeDrivePath(`/${parts.filter(Boolean).join("/")}`);
+}
+
+function fileRouteForPath(path) {
+  const parts = normalizeDrivePath(path).split("/").filter(Boolean);
+  return { name: "files", params: { drivePath: parts } };
 }
 
 function goUp() {
