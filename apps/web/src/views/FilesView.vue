@@ -1,37 +1,61 @@
 <template>
-  <AppShell title="我的网盘" :subtitle="currentPath">
+  <AppShell :title="t('app.title')" :subtitle="currentPath">
     <section class="panel file-panel">
       <div class="breadcrumb-row">
-        <el-button :icon="ArrowLeft" :disabled="currentPath === '/'" circle @click="goUp" aria-label="返回上级" />
-        <el-breadcrumb separator="/">
-          <el-breadcrumb-item>
-            <a href="#" @click.prevent="openPath('/')">全部文件</a>
-          </el-breadcrumb-item>
-          <el-breadcrumb-item v-for="part in breadcrumbParts" :key="part.path">
-            <a href="#" @click.prevent="openPath(part.path)">{{ part.name }}</a>
-          </el-breadcrumb-item>
-        </el-breadcrumb>
+        <el-button :icon="ArrowLeft" :disabled="currentPath === '/'" circle @click="goUp" :aria-label="t('files.back')" />
+        <nav class="path-navigator" :title="currentPath" :aria-label="currentPath">
+          <div class="path-trail">
+            <button class="path-crumb path-root" type="button" @click="openPath('/')">{{ t("files.allFiles") }}</button>
+            <template v-if="breadcrumbParts.length">
+              <span class="path-separator" aria-hidden="true">/</span>
+              <el-dropdown v-if="collapsedBreadcrumbParts.length" trigger="click" :show-arrow="false" popper-class="drive-dropdown-popper path-dropdown-popper">
+                <button class="path-crumb path-more-trigger" type="button" :aria-label="t('files.moreActions')">
+                  <el-icon><MoreHorizontal /></el-icon>
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-for="part in collapsedBreadcrumbParts" :key="part.path" @click="openPath(part.path)">
+                      {{ part.name }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <span v-if="collapsedBreadcrumbParts.length && visibleBreadcrumbParts.length" class="path-separator" aria-hidden="true">/</span>
+              <template v-for="(part, index) in visibleBreadcrumbParts" :key="part.path">
+                <button class="path-crumb" :class="{ current: part.path === currentPath }" type="button" @click="openPath(part.path)">
+                  {{ part.name }}
+                </button>
+                <span v-if="index < visibleBreadcrumbParts.length - 1" class="path-separator" aria-hidden="true">/</span>
+              </template>
+            </template>
+          </div>
+          <div class="path-mobile-summary">
+            <button class="path-current" type="button" @click="openPath(currentPath)">{{ currentFolderLabel }}</button>
+            <div v-if="parentPathLabel" class="path-parent">{{ parentPathLabel }}</div>
+          </div>
+        </nav>
         <div class="breadcrumb-actions">
-          <el-button :icon="FolderPlus" @click="promptCreateFolder">新建文件夹</el-button>
-          <el-button type="primary" :icon="Upload" @click="fileInput?.click()">上传</el-button>
-          <el-dropdown trigger="click" :show-arrow="false" popper-class="drive-dropdown-popper">
-            <el-button :icon="MoreHorizontal" circle aria-label="更多操作" />
+          <el-button class="desktop-file-action" :icon="FolderPlus" @click="promptCreateFolder">{{ t("files.newFolder") }}</el-button>
+          <el-button class="desktop-file-action" type="primary" :icon="Upload" @click="fileInput?.click()">{{ t("files.upload") }}</el-button>
+          <el-dropdown class="desktop-file-action" trigger="click" :show-arrow="false" popper-class="drive-dropdown-popper">
+            <el-button :icon="MoreHorizontal" circle :aria-label="t('files.moreActions')" />
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item :icon="FolderUp" @click="folderInput?.click()">上传文件夹</el-dropdown-item>
-                <el-dropdown-item :icon="RefreshCw" @click="loadFiles">刷新</el-dropdown-item>
-                <el-dropdown-item :icon="viewMode === 'list' ? LayoutGrid : LayoutList" @click="toggleView">{{ viewMode === "list" ? "网格视图" : "列表视图" }}</el-dropdown-item>
+                <el-dropdown-item :icon="FolderUp" @click="folderInput?.click()">{{ t("files.uploadFolder") }}</el-dropdown-item>
+                <el-dropdown-item :icon="RefreshCw" @click="loadFiles">{{ t("files.refresh") }}</el-dropdown-item>
+                <el-dropdown-item :icon="viewMode === 'list' ? LayoutGrid : LayoutList" @click="toggleView">{{ viewMode === "list" ? t("files.gridView") : t("files.listView") }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <el-button class="language-toggle desktop-file-action" text :icon="languageIcon" :aria-label="localeToggleLabel" :title="localeToggleLabel" @click="toggleLocale" />
           <el-dropdown trigger="click" class="breadcrumb-user-menu" :show-arrow="false" popper-class="drive-dropdown-popper">
-            <button class="account-trigger" type="button" :aria-label="`${accountName} 菜单`">
+            <button class="account-trigger" type="button" :aria-label="t('files.accountMenu', { name: accountName })">
               <span class="account-name">{{ accountName }}</span>
               <span class="avatar" aria-hidden="true">{{ initial }}</span>
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item :icon="LogOut" :disabled="loggingOut" @click="logout">退出登录</el-dropdown-item>
+                <el-dropdown-item :icon="LogOut" :disabled="loggingOut" @click="logout">{{ t("files.logout") }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -39,7 +63,7 @@
       </div>
 
       <div class="simple-toolbar">
-        <el-input v-model="query" clearable placeholder="搜索" class="search-input" :prefix-icon="Search" @keyup.enter="loadFiles" @clear="loadFiles" />
+        <el-input v-model="query" clearable :placeholder="t('files.search')" class="search-input" :prefix-icon="Search" @keyup.enter="loadFiles" @clear="loadFiles" />
       </div>
 
       <input ref="fileInput" type="file" multiple hidden @change="handleFileInput" />
@@ -47,10 +71,10 @@
 
       <Transition name="selection-bar-slide">
         <div v-if="selectedRows.length" class="selection-bar">
-          <span class="selection-count">已选择 {{ selectedRows.length }} 项</span>
+          <span class="selection-count">{{ t("files.selectionCount", { count: selectedRows.length }) }}</span>
           <div class="selection-actions">
-            <el-button text type="primary" @click="downloadSelected">下载</el-button>
-            <el-button text type="danger" @click="deleteSelected">删除</el-button>
+            <el-button text type="primary" @click="downloadSelected">{{ t("files.download") }}</el-button>
+            <el-button text type="danger" @click="deleteSelected">{{ t("files.delete") }}</el-button>
           </div>
         </div>
       </Transition>
@@ -63,46 +87,90 @@
         @dragleave.prevent="handleDragLeave"
         @drop.prevent="handleDrop"
       >
-        <el-auto-resizer v-if="viewMode === 'list'" v-loading="loading" class="file-table-resizer">
-          <template #default="{ height, width }">
-            <el-table-v2
-              v-if="items.length"
-              ref="tableRef"
-              class="file-table file-table-v2"
-              :cache="8"
-              :columns="tableColumns"
-              :data="items"
-              :height="height"
-              :row-event-handlers="tableRowEventHandlers"
-              :row-height="54"
-              row-key="path"
-              :sort-by="tableSortBy"
-              :width="width"
-              @column-sort="handleTableSort"
-            />
-            <div v-else class="empty-state file-table-empty" :style="{ height: `${height}px` }">
-              <FolderOpen class="empty-state-icon" aria-hidden="true" />
-              <div class="empty-state-title">当前目录为空</div>
-            </div>
-          </template>
-        </el-auto-resizer>
+        <template v-if="!isMobile">
+          <el-auto-resizer v-if="viewMode === 'list'" v-loading="loading" class="file-table-resizer">
+            <template #default="{ height, width }">
+              <el-table-v2
+                v-if="items.length"
+                ref="tableRef"
+                class="file-table file-table-v2"
+                :cache="8"
+                :columns="tableColumns"
+                :data="items"
+                :height="height"
+                :row-event-handlers="tableRowEventHandlers"
+                :row-height="54"
+                row-key="path"
+                :sort-by="tableSortBy"
+                :width="width"
+                @column-sort="handleTableSort"
+              />
+              <div v-else class="empty-state file-table-empty" :style="{ height: `${height}px` }">
+                <FolderOpen class="empty-state-icon" aria-hidden="true" />
+                <div class="empty-state-title">{{ t("files.empty") }}</div>
+              </div>
+            </template>
+          </el-auto-resizer>
 
-        <el-scrollbar v-else v-loading="loading" class="file-grid-scrollbar">
-          <div class="file-grid" :class="{ empty: !items.length }">
+          <el-scrollbar v-else v-loading="loading" class="file-grid-scrollbar">
+            <div class="file-grid" :class="{ empty: !items.length }">
+              <div v-if="!loading && items.length === 0" class="empty-state">
+                <FolderOpen class="empty-state-icon" aria-hidden="true" />
+                <div class="empty-state-title">{{ t("files.empty") }}</div>
+              </div>
+              <div v-for="item in items" :key="item.path" class="file-card" :class="{ selected: selectedMap.has(item.path) }" @dblclick="openItem(item)" @click="toggleGridSelection(item)">
+                <div class="file-card-head">
+                  <span class="file-icon" :class="item.kind">
+                    <el-icon><component :is="item.icon" /></el-icon>
+                  </span>
+                  <el-checkbox :model-value="selectedMap.has(item.path)" @click.stop @change="toggleGridSelection(item)" />
+                </div>
+                <div class="file-card-name">{{ item.name }}</div>
+                <div class="file-card-meta">{{ item.sizeLabel }}</div>
+                <div class="file-card-meta">{{ item.modifiedAtLabel }}</div>
+              </div>
+            </div>
+          </el-scrollbar>
+        </template>
+
+        <el-scrollbar v-else v-loading="loading" class="mobile-file-scrollbar">
+          <div class="mobile-file-list" :class="{ empty: !items.length }">
             <div v-if="!loading && items.length === 0" class="empty-state">
               <FolderOpen class="empty-state-icon" aria-hidden="true" />
-              <div class="empty-state-title">当前目录为空</div>
+              <div class="empty-state-title">{{ t("files.empty") }}</div>
             </div>
-            <div v-for="item in items" :key="item.path" class="file-card" :class="{ selected: selectedMap.has(item.path) }" @dblclick="openItem(item)" @click="toggleGridSelection(item)">
-              <div class="file-card-head">
-                <span class="file-icon" :class="item.kind">
-                  <el-icon><component :is="item.icon" /></el-icon>
-                </span>
-                <el-checkbox :model-value="selectedMap.has(item.path)" @click.stop @change="toggleGridSelection(item)" />
+            <div
+              v-for="item in items"
+              :key="item.path"
+              class="mobile-file-item"
+              :class="{ selected: selectedMap.has(item.path) }"
+              role="button"
+              tabindex="0"
+              @click="openItem(item)"
+              @keydown.enter.prevent="openItem(item)"
+              @keydown.space.prevent="toggleGridSelection(item)"
+              @contextmenu.prevent="openRowContextMenu(item, null, $event)"
+            >
+              <el-checkbox
+                class="mobile-file-check"
+                :model-value="selectedMap.has(item.path)"
+                :aria-label="t('files.selectionCount', { count: selectedRows.length })"
+                @click.stop
+                @change="toggleGridSelection(item)"
+              />
+              <span class="file-icon mobile-file-icon" :class="item.kind">
+                <el-icon><component :is="item.icon" /></el-icon>
+              </span>
+              <div class="mobile-file-main">
+                <div class="mobile-file-name">{{ item.name }}</div>
+                <div class="mobile-file-meta">
+                  <span>{{ item.sizeLabel }}</span>
+                  <span>{{ item.modifiedAtLabel }}</span>
+                </div>
               </div>
-              <div class="file-card-name">{{ item.name }}</div>
-              <div class="file-card-meta">{{ item.sizeLabel }}</div>
-              <div class="file-card-meta">{{ item.modifiedAtLabel }}</div>
+              <button class="mobile-row-action" type="button" :aria-label="t('files.rowActions', { name: item.name })" @click.stop="openMobileRowActions(item, $event)">
+                <el-icon><MoreHorizontal /></el-icon>
+              </button>
             </div>
           </div>
         </el-scrollbar>
@@ -111,7 +179,7 @@
           <div v-if="dragging" class="file-drop-overlay" aria-hidden="true">
             <div class="file-drop-message">
               <el-icon><Upload /></el-icon>
-              <span>释放上传</span>
+              <span>{{ t("files.dropToUpload") }}</span>
             </div>
           </div>
         </Transition>
@@ -123,10 +191,10 @@
             <div v-if="uploadPanelOpen" class="upload-panel">
               <div class="upload-panel-head">
                 <div>
-                  <div class="upload-panel-title">上传任务</div>
+                  <div class="upload-panel-title">{{ t("files.uploadTasks") }}</div>
                   <div class="upload-panel-subtitle">{{ uploadSummary }}</div>
                 </div>
-                <el-button v-if="hasFinishedTasks" text size="small" @click="clearFinishedTasks">清理完成</el-button>
+                <el-button v-if="hasFinishedTasks" text size="small" @click="clearFinishedTasks">{{ t("files.clearFinished") }}</el-button>
               </div>
 
               <el-scrollbar class="upload-task-scrollbar" max-height="min(270px, calc(100dvh - 280px))">
@@ -152,7 +220,7 @@
             class="upload-orb"
             type="button"
             :aria-expanded="uploadPanelOpen"
-            aria-label="上传任务"
+            :aria-label="t('files.uploadTasks')"
             :style="{ '--upload-progress': `${overallUploadProgress * 3.6}deg` }"
             @click="uploadPanelOpen = !uploadPanelOpen"
           >
@@ -162,23 +230,63 @@
         </div>
       </Transition>
 
+      <Transition name="mobile-action-menu-fade">
+        <div v-if="actionMenuOpen" class="mobile-action-scrim" @click="actionMenuOpen = false" />
+      </Transition>
+      <div class="mobile-action-widget" :class="{ open: actionMenuOpen }">
+        <Transition name="mobile-action-menu-pop">
+          <div v-if="actionMenuOpen" class="mobile-action-menu" role="menu">
+            <button type="button" role="menuitem" @click="runMobileAction(promptCreateFolder)">
+              <el-icon><FolderPlus /></el-icon>
+              <span>{{ t("files.newFolder") }}</span>
+            </button>
+            <button type="button" role="menuitem" @click="runMobileAction(() => fileInput?.click())">
+              <el-icon><Upload /></el-icon>
+              <span>{{ t("files.upload") }}</span>
+            </button>
+            <button type="button" role="menuitem" @click="runMobileAction(() => folderInput?.click())">
+              <el-icon><FolderUp /></el-icon>
+              <span>{{ t("files.uploadFolder") }}</span>
+            </button>
+            <button type="button" role="menuitem" @click="runMobileAction(loadFiles)">
+              <el-icon><RefreshCw /></el-icon>
+              <span>{{ t("files.refresh") }}</span>
+            </button>
+            <button type="button" role="menuitem" @click="runMobileAction(toggleLocale)">
+              <el-icon><component :is="languageIcon" /></el-icon>
+              <span>{{ localeToggleLabel }}</span>
+            </button>
+          </div>
+        </Transition>
+        <button
+          class="mobile-action-fab"
+          type="button"
+          :aria-expanded="actionMenuOpen"
+          :aria-label="t('files.moreActions')"
+          @click="actionMenuOpen = !actionMenuOpen"
+        >
+          <el-icon><MoreHorizontal /></el-icon>
+        </button>
+      </div>
+
     </section>
 
-    <el-dialog v-model="shareDialog" title="分享链接" width="min(460px, calc(100vw - 32px))">
+    <el-dialog v-model="shareDialog" :title="t('files.shareDialogTitle')" width="min(460px, calc(100vw - 32px))">
       <div class="share-box">
         <el-input v-model="shareUrl" readonly />
-        <el-button type="primary" @click="copyShareUrl">复制链接</el-button>
+        <el-button type="primary" @click="copyShareUrl">{{ t("files.copyLink") }}</el-button>
       </div>
     </el-dialog>
 
-    <el-dialog v-model="previewDialog" :title="previewItem?.name || '预览'" width="min(900px, calc(100vw - 32px))">
+    <el-dialog v-model="previewDialog" :title="previewItem?.name || t('files.preview')" width="min(900px, calc(100vw - 32px))">
       <img v-if="previewUrl" class="preview-image" :src="previewUrl" :alt="previewItem?.name || 'preview'" />
     </el-dialog>
 
     <Teleport to="body">
-      <div v-if="contextMenu.visible" class="context-menu-layer" @mousedown="closeContextMenu" @contextmenu.prevent="closeContextMenu">
+      <div v-if="contextMenu.visible" class="context-menu-layer" @mousedown="closeContextMenu" @click="closeContextMenu" @contextmenu.prevent="closeContextMenu">
         <div
           class="drive-dropdown-popper drive-context-menu el-popper"
+          :class="{ 'is-mobile-context': isMobile }"
           :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
           role="menu"
           @mousedown.stop
@@ -186,28 +294,28 @@
         >
           <div class="el-dropdown-menu">
             <button class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('open')">
-              <el-icon><FolderOpen /></el-icon><span>打开</span>
+              <el-icon><FolderOpen /></el-icon><span>{{ t("files.open") }}</span>
             </button>
             <button v-if="contextMenu.item?.type === 'file'" class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('download')">
-              <el-icon><Download /></el-icon><span>下载</span>
+              <el-icon><Download /></el-icon><span>{{ t("files.download") }}</span>
             </button>
             <button v-if="contextMenu.item && canPreview(contextMenu.item)" class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('preview')">
-              <el-icon><Eye /></el-icon><span>预览</span>
+              <el-icon><Eye /></el-icon><span>{{ t("files.preview") }}</span>
             </button>
             <button class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('rename')">
-              <el-icon><Pencil /></el-icon><span>重命名</span>
+              <el-icon><Pencil /></el-icon><span>{{ t("files.rename") }}</span>
             </button>
             <button class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('move')">
-              <el-icon><Move /></el-icon><span>移动</span>
+              <el-icon><Move /></el-icon><span>{{ t("files.move") }}</span>
             </button>
             <button v-if="contextMenu.item?.type === 'file'" class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('copy')">
-              <el-icon><Copy /></el-icon><span>复制</span>
+              <el-icon><Copy /></el-icon><span>{{ t("files.copy") }}</span>
             </button>
             <button v-if="contextMenu.item?.type === 'file'" class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('share')">
-              <el-icon><Share2 /></el-icon><span>分享</span>
+              <el-icon><Share2 /></el-icon><span>{{ t("files.share") }}</span>
             </button>
             <button class="el-dropdown-menu__item el-dropdown-menu__item--divided context-menu-item dropdown-danger" type="button" role="menuitem" @click="runContextAction('delete')">
-              <el-icon><Trash2 /></el-icon><span>删除</span>
+              <el-icon><Trash2 /></el-icon><span>{{ t("files.delete") }}</span>
             </button>
           </div>
         </div>
@@ -217,10 +325,11 @@
 </template>
 
 <script setup>
-import { computed, h, markRaw, reactive, ref, watch } from "vue";
+import { computed, h, markRaw, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElCheckbox, ElIcon, ElMessage, ElMessageBox } from "element-plus";
 import {
+  ALargeSmall,
   ArrowLeft,
   Copy,
   Download,
@@ -238,6 +347,7 @@ import {
   FolderOpen,
   FolderPlus,
   FolderUp,
+  Languages,
   LayoutGrid,
   LayoutList,
   LogOut,
@@ -251,6 +361,7 @@ import {
   Upload
 } from "@lucide/vue";
 import { api } from "../api/client.js";
+import { dateLocale, locale, localeToggleLabel, t, toggleLocale, uiError } from "../i18n.js";
 import { applyAuth, state } from "../store.js";
 import AppShell from "./AppShell.vue";
 
@@ -264,11 +375,13 @@ const query = ref("");
 const sort = ref("name");
 const order = ref("asc");
 const viewMode = ref(localStorage.getItem("web-drive-view") || "list");
+const isMobile = ref(false);
 const selectedRows = ref([]);
 const tableRef = ref(null);
 const fileInput = ref(null);
 const folderInput = ref(null);
 const dragging = ref(false);
+const actionMenuOpen = ref(false);
 const tasks = reactive([]);
 const uploadPanelOpen = ref(false);
 const activeUploads = ref(0);
@@ -280,16 +393,26 @@ const previewUrl = ref("");
 const loggingOut = ref(false);
 const contextMenu = reactive({ visible: false, x: 0, y: 0, item: null });
 const chunkSize = computed(() => Number(state.config.uploadChunkSize || 8 * 1024 * 1024));
-const accountName = computed(() => state.user?.username || "用户");
+const accountName = computed(() => state.user?.username || t("app.user"));
 const initial = computed(() => accountName.value.slice(0, 1).toUpperCase());
+const languageIcon = computed(() => (locale.value === "zh-CN" ? Languages : ALargeSmall));
 const uploadConcurrency = 3;
 const uploadQueue = [];
-const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" });
+const dateTimeFormatter = computed(() => new Intl.DateTimeFormat(dateLocale.value, { dateStyle: "medium", timeStyle: "short" }));
 let uploadRefreshTimer = null;
+let mobileMediaQuery = null;
 
 const breadcrumbParts = computed(() => {
   const parts = currentPath.value.split("/").filter(Boolean);
   return parts.map((name, index) => ({ name, path: `/${parts.slice(0, index + 1).join("/")}` }));
+});
+const collapsedBreadcrumbParts = computed(() => (breadcrumbParts.value.length > 3 ? breadcrumbParts.value.slice(0, -2) : []));
+const visibleBreadcrumbParts = computed(() => (collapsedBreadcrumbParts.value.length ? breadcrumbParts.value.slice(-2) : breadcrumbParts.value));
+const currentFolderLabel = computed(() => breadcrumbParts.value.at(-1)?.name || t("files.allFiles"));
+const parentPathLabel = computed(() => {
+  if (!breadcrumbParts.value.length) return "";
+  const parents = breadcrumbParts.value.slice(0, -1).map((part) => part.name);
+  return [t("files.allFiles"), ...parents].join(" / ");
 });
 const selectedMap = computed(() => new Map(selectedRows.value.map((item) => [item.path, item])));
 const allListSelected = computed(() => items.value.length > 0 && items.value.every((item) => selectedMap.value.has(item.path)));
@@ -306,10 +429,10 @@ const overallUploadProgress = computed(() => {
 const uploadOrbBadge = computed(() => uploadActiveCount.value);
 const uploadSummary = computed(() => {
   const parts = [];
-  if (uploadActiveCount.value) parts.push(`${uploadActiveCount.value} 个进行中`);
-  if (uploadDoneCount.value) parts.push(`${uploadDoneCount.value} 个完成`);
-  if (uploadErrorCount.value) parts.push(`${uploadErrorCount.value} 个失败`);
-  return parts.join(" · ") || "暂无任务";
+  if (uploadActiveCount.value) parts.push(t("files.uploadActive", { count: uploadActiveCount.value }));
+  if (uploadDoneCount.value) parts.push(t("files.uploadDone", { count: uploadDoneCount.value }));
+  if (uploadErrorCount.value) parts.push(t("files.uploadError", { count: uploadErrorCount.value }));
+  return parts.join(" · ") || t("files.noTasks");
 });
 const sortableTableKeys = new Set(["name", "size", "modifiedAt"]);
 const tableRowEventHandlers = {
@@ -339,7 +462,7 @@ const tableColumns = computed(() => [
   {
     key: "name",
     dataKey: "name",
-    title: "名称",
+    title: t("files.name"),
     width: 460,
     flexGrow: 1,
     sortable: true,
@@ -348,7 +471,7 @@ const tableColumns = computed(() => [
   {
     key: "size",
     dataKey: "size",
-    title: "大小",
+    title: t("files.size"),
     width: 120,
     sortable: true,
     cellRenderer: ({ rowData }) => (rowData.type === "folder" ? "-" : rowData.sizeLabel)
@@ -356,7 +479,7 @@ const tableColumns = computed(() => [
   {
     key: "modifiedAt",
     dataKey: "modifiedAt",
-    title: "修改时间",
+    title: t("files.modifiedAt"),
     width: 190,
     sortable: true,
     cellRenderer: ({ rowData }) => rowData.modifiedAtLabel
@@ -372,6 +495,12 @@ const tableColumns = computed(() => [
 ]);
 
 watch(viewMode, (value) => localStorage.setItem("web-drive-view", value));
+watch(isMobile, (value) => {
+  if (!value) actionMenuOpen.value = false;
+});
+watch(locale, () => {
+  items.value = items.value.map(normalizeFileItem);
+});
 watch(
   () => route.fullPath,
   () => {
@@ -389,6 +518,21 @@ watch(query, () => {
   watch.timer = setTimeout(loadFiles, 250);
 });
 
+onMounted(() => {
+  mobileMediaQuery = window.matchMedia("(max-width: 640px)");
+  syncMobileState(mobileMediaQuery);
+  mobileMediaQuery.addEventListener?.("change", syncMobileState);
+});
+
+onBeforeUnmount(() => {
+  mobileMediaQuery?.removeEventListener?.("change", syncMobileState);
+  clearTimeout(uploadRefreshTimer);
+});
+
+function syncMobileState(event) {
+  isMobile.value = Boolean(event.matches);
+}
+
 async function loadFiles(options = {}) {
   const { preserveSelection = false, resetScroll = true, silent = false } = options;
   if (!silent) loading.value = true;
@@ -403,7 +547,7 @@ async function loadFiles(options = {}) {
     hasLoadedCurrentPath.value = true;
     if (route.name === "files" && nextPath !== pathFromRoute(route)) router.replace(fileRouteForPath(nextPath));
   } catch (err) {
-    ElMessage.error(err.message || "读取目录失败");
+    ElMessage.error(uiError(err, "files.readFailed"));
   } finally {
     if (!silent) loading.value = false;
   }
@@ -417,7 +561,7 @@ async function logout() {
     applyAuth(null);
     router.push("/login");
   } catch (err) {
-    ElMessage.error(err.message || "退出失败");
+    ElMessage.error(uiError(err, "files.logoutFailed"));
   } finally {
     loggingOut.value = false;
   }
@@ -512,16 +656,17 @@ function renderActionButton(row) {
     {
       class: "table-action-button",
       type: "button",
-      "aria-label": `${row.name} 操作`,
+      "aria-label": t("files.rowActions", { name: row.name }),
       onClick: (event) => openRowContextMenu(row, null, event, { anchor: "button" })
     },
-    [h("span", null, "操作")]
+    [h("span", null, t("files.actions"))]
   );
 }
 
 function openRowContextMenu(row, column, event, options = {}) {
   event.preventDefault();
   event.stopPropagation?.();
+  actionMenuOpen.value = false;
   const menuWidth = 164;
   const itemCount = 4 + (row.type === "file" ? 3 : 0) + (canPreview(row) ? 1 : 0);
   const menuHeight = Math.min(360, 14 + itemCount * 40);
@@ -534,9 +679,18 @@ function openRowContextMenu(row, column, event, options = {}) {
   contextMenu.visible = true;
 }
 
+function openMobileRowActions(item, event) {
+  openRowContextMenu(item, null, event, { anchor: "button" });
+}
+
 function closeContextMenu() {
   contextMenu.visible = false;
   contextMenu.item = null;
+}
+
+function runMobileAction(action) {
+  actionMenuOpen.value = false;
+  action();
 }
 
 async function runContextAction(action) {
@@ -595,7 +749,7 @@ function normalizeFileItem(item) {
     ...item,
     kind,
     icon: fileIcons[kind] || FileQuestion,
-    sizeLabel: item.type === "folder" ? "文件夹" : formatSize(item.size),
+    sizeLabel: item.type === "folder" ? t("files.folder") : formatSize(item.size),
     modifiedAtLabel: formatTime(item.modifiedAt)
   };
 }
@@ -618,7 +772,7 @@ function formatSize(size = 0) {
 
 function formatTime(value) {
   if (!value) return "-";
-  return dateTimeFormatter.format(new Date(value));
+  return dateTimeFormatter.value.format(new Date(value));
 }
 
 function download(item) {
@@ -637,14 +791,14 @@ function preview(item) {
 
 async function promptCreateFolder() {
   try {
-    const { value } = await ElMessageBox.prompt("输入文件夹名称", "新建文件夹", {
-      inputValidator: (value) => Boolean(value?.trim()) || "文件夹名称不能为空"
+    const { value } = await ElMessageBox.prompt(t("files.createFolderPrompt"), t("files.createFolderTitle"), {
+      inputValidator: (value) => Boolean(value?.trim()) || t("files.folderNameRequired")
     });
     await api.createFolder({ parent: currentPath.value, name: value.trim() });
-    ElMessage.success("文件夹已创建");
+    ElMessage.success(t("files.folderCreated"));
     await loadFiles();
   } catch (err) {
-    if (err !== "cancel") ElMessage.error(err.message || "创建失败");
+    if (err !== "cancel") ElMessage.error(uiError(err, "files.createFailed"));
   }
 }
 
@@ -659,48 +813,48 @@ async function deleteSelected() {
 async function deletePaths(paths) {
   if (!paths.length) return;
   try {
-    await ElMessageBox.confirm(`确认删除 ${paths.length} 项？`, "删除确认", { type: "warning" });
+    await ElMessageBox.confirm(t("files.deleteConfirm", { count: paths.length }), t("files.deleteConfirmTitle"), { type: "warning" });
     await api.deleteFiles({ paths });
-    ElMessage.success("已删除");
+    ElMessage.success(t("files.deleted"));
     await loadFiles();
   } catch (err) {
-    if (err !== "cancel") ElMessage.error(err.message || "删除失败");
+    if (err !== "cancel") ElMessage.error(uiError(err, "files.deleteFailed"));
   }
 }
 
 async function promptRename(item) {
   try {
-    const { value } = await ElMessageBox.prompt("输入新的名称", "重命名", { inputValue: item.name });
+    const { value } = await ElMessageBox.prompt(t("files.renamePrompt"), t("files.renameTitle"), { inputValue: item.name });
     if (!value) return;
     await api.renameFile({ path: item.path, name: value });
-    ElMessage.success("已重命名");
+    ElMessage.success(t("files.renamed"));
     await loadFiles();
   } catch (err) {
-    if (err !== "cancel") ElMessage.error(err.message || "重命名失败");
+    if (err !== "cancel") ElMessage.error(uiError(err, "files.renameFailed"));
   }
 }
 
 async function promptMove(item) {
   try {
-    const { value } = await ElMessageBox.prompt("输入目标完整路径", "移动", { inputValue: item.path });
+    const { value } = await ElMessageBox.prompt(t("files.movePrompt"), t("files.moveTitle"), { inputValue: item.path });
     if (!value) return;
     await api.moveFile({ path: item.path, target: value });
-    ElMessage.success("已移动");
+    ElMessage.success(t("files.moved"));
     await loadFiles();
   } catch (err) {
-    if (err !== "cancel") ElMessage.error(err.message || "移动失败");
+    if (err !== "cancel") ElMessage.error(uiError(err, "files.moveFailed"));
   }
 }
 
 async function promptCopy(item) {
   try {
-    const { value } = await ElMessageBox.prompt("输入复制后的完整路径", "复制", { inputValue: item.path });
+    const { value } = await ElMessageBox.prompt(t("files.copyPrompt"), t("files.copyTitle"), { inputValue: item.path });
     if (!value) return;
     await api.copyFile({ path: item.path, target: value });
-    ElMessage.success("已复制");
+    ElMessage.success(t("files.copied"));
     await loadFiles();
   } catch (err) {
-    if (err !== "cancel") ElMessage.error(err.message || "复制失败");
+    if (err !== "cancel") ElMessage.error(uiError(err, "files.copyFailed"));
   }
 }
 
@@ -710,13 +864,13 @@ async function share(item) {
     shareUrl.value = `${location.origin}${data.share.url}`;
     shareDialog.value = true;
   } catch (err) {
-    ElMessage.error(err.message || "创建分享失败");
+    ElMessage.error(uiError(err, "files.shareFailed"));
   }
 }
 
 async function copyShareUrl() {
   await navigator.clipboard.writeText(shareUrl.value);
-  ElMessage.success("分享链接已复制");
+  ElMessage.success(t("files.linkCopied"));
 }
 
 function isFileDrag(event) {
@@ -747,13 +901,13 @@ async function handleDrop(event) {
     if (files.length) {
       uploadFiles(files);
     } else if (folders.length) {
-      ElMessage.success("文件夹已创建");
+      ElMessage.success(t("files.folderCreated"));
       loadFiles({ preserveSelection: true, resetScroll: false, silent: true });
     } else {
-      ElMessage.warning("没有可上传的文件");
+      ElMessage.warning(t("files.noUploadFiles"));
     }
   } catch (err) {
-    ElMessage.error(err.message || "读取拖拽文件夹失败");
+    ElMessage.error(uiError(err, "files.dropReadFailed"));
   }
 }
 
@@ -904,7 +1058,7 @@ async function uploadOne(file, task) {
     scheduleUploadRefresh();
   } catch (err) {
     task.status = "error";
-    ElMessage.error(err.message || "上传失败");
+    ElMessage.error(uiError(err, "files.uploadFailed"));
   }
 }
 
@@ -923,10 +1077,10 @@ function clearFinishedTasks() {
 }
 
 function uploadStatusText(task) {
-  if (task.status === "pending") return "等待中";
-  if (task.status === "done") return "已完成";
-  if (task.status === "error") return "失败";
-  return "上传中";
+  if (task.status === "pending") return t("upload.pending");
+  if (task.status === "done") return t("upload.done");
+  if (task.status === "error") return t("upload.error");
+  return t("upload.uploading");
 }
 
 function uploadProgressStatus(task) {

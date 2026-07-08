@@ -6,19 +6,19 @@
           <img class="brand-icon" src="/icon.svg" alt="WebDrive" width="44" height="44" />
           <div>
             <h1>WebDrive</h1>
-            <div class="subtitle">登录后访问你的个人网盘空间</div>
+            <div class="subtitle">{{ t("login.subtitle") }}</div>
           </div>
         </div>
       </template>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="block-gap" />
       <el-form label-position="top" @submit.prevent="login">
-        <el-form-item label="用户名">
+        <el-form-item :label="t('login.username')">
           <el-input v-model="form.username" autocomplete="username" />
         </el-form-item>
-        <el-form-item label="密码">
+        <el-form-item :label="t('login.password')">
           <el-input v-model="form.password" type="password" autocomplete="current-password" show-password />
         </el-form-item>
-        <el-button type="primary" class="full-button" :loading="loading" @click="login">登录</el-button>
+        <el-button type="primary" class="full-button" :loading="loading" @click="login">{{ t("login.signIn") }}</el-button>
       </el-form>
     </el-card>
   </main>
@@ -28,6 +28,7 @@
 import { reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../api/client.js";
+import { t, uiError } from "../i18n.js";
 import { applyAuth } from "../store.js";
 
 const router = useRouter();
@@ -44,7 +45,7 @@ async function login() {
     applyAuth(data.user);
     router.push("/");
   } catch (err) {
-    error.value = err.message || "登录失败";
+    error.value = uiError(err, "login.error");
   } finally {
     loading.value = false;
   }
