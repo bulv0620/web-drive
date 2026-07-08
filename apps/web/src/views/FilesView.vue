@@ -95,14 +95,14 @@
             </div>
             <div v-for="item in items" :key="item.path" class="file-card" :class="{ selected: selectedMap.has(item.path) }" @dblclick="openItem(item)" @click="toggleGridSelection(item)">
               <div class="file-card-head">
-                <span class="file-icon" :class="fileTypeClass(item)">
-                  <el-icon><component :is="fileIconFor(item)" /></el-icon>
+                <span class="file-icon" :class="item.kind">
+                  <el-icon><component :is="item.icon" /></el-icon>
                 </span>
                 <el-checkbox :model-value="selectedMap.has(item.path)" @click.stop @change="toggleGridSelection(item)" />
               </div>
               <div class="file-card-name">{{ item.name }}</div>
-              <div class="file-card-meta">{{ item.type === "folder" ? "文件夹" : formatSize(item.size) }}</div>
-              <div class="file-card-meta">{{ formatTime(item.modifiedAt) }}</div>
+              <div class="file-card-meta">{{ item.sizeLabel }}</div>
+              <div class="file-card-meta">{{ item.modifiedAtLabel }}</div>
             </div>
           </div>
         </el-scrollbar>
@@ -217,9 +217,9 @@
 </template>
 
 <script setup>
-import { computed, h, onMounted, reactive, ref, watch } from "vue";
+import { computed, h, markRaw, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { ElButton, ElCheckbox, ElDropdown, ElDropdownItem, ElDropdownMenu, ElIcon, ElMessage, ElMessageBox } from "element-plus";
+import { ElCheckbox, ElIcon, ElMessage, ElMessageBox } from "element-plus";
 import {
   ArrowLeft,
   Copy,
@@ -264,7 +264,6 @@ const order = ref("asc");
 const viewMode = ref(localStorage.getItem("web-drive-view") || "list");
 const selectedRows = ref([]);
 const tableRef = ref(null);
-const rowDropdownRefs = new Map();
 const fileInput = ref(null);
 const folderInput = ref(null);
 const dragging = ref(false);
@@ -283,6 +282,7 @@ const accountName = computed(() => state.user?.username || "用户");
 const initial = computed(() => accountName.value.slice(0, 1).toUpperCase());
 const uploadConcurrency = 3;
 const uploadQueue = [];
+const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" });
 let uploadRefreshTimer = null;
 
 const breadcrumbParts = computed(() => {
@@ -349,7 +349,7 @@ const tableColumns = computed(() => [
     title: "大小",
     width: 120,
     sortable: true,
-    cellRenderer: ({ rowData }) => (rowData.type === "folder" ? "-" : formatSize(rowData.size))
+    cellRenderer: ({ rowData }) => (rowData.type === "folder" ? "-" : rowData.sizeLabel)
   },
   {
     key: "modifiedAt",
@@ -357,7 +357,7 @@ const tableColumns = computed(() => [
     title: "修改时间",
     width: 190,
     sortable: true,
-    cellRenderer: ({ rowData }) => formatTime(rowData.modifiedAt)
+    cellRenderer: ({ rowData }) => rowData.modifiedAtLabel
   },
   {
     key: "actions",
@@ -365,7 +365,7 @@ const tableColumns = computed(() => [
     title: "",
     width: 104,
     align: "center",
-    cellRenderer: ({ rowData }) => renderActionMenu(rowData)
+    cellRenderer: ({ rowData }) => renderActionButton(rowData)
   }
 ]);
 
@@ -385,7 +385,7 @@ async function loadFiles(options = {}) {
   try {
     const data = await api.files({ path: currentPath.value, q: query.value, sort: sort.value, order: order.value });
     currentPath.value = data.path;
-    items.value = data.items;
+    items.value = (data.items || []).map(normalizeFileItem);
     state.config = data.config || state.config;
     if (!preserveSelection) selectedRows.value = [];
     if (resetScroll) tableRef.value?.scrollToTop?.(0);
@@ -428,7 +428,7 @@ function openItem(item) {
 }
 
 function handleVirtualRowDblclick(row, event) {
-  if (event?.target?.closest?.(".el-checkbox, .el-dropdown, .el-button")) return;
+  if (event?.target?.closest?.(".el-checkbox, .table-action-button, .el-button")) return;
   openItem(row);
 }
 
@@ -464,92 +464,37 @@ function renderFileNameCell(row) {
       }
     },
     [
-      h("span", { class: ["file-icon", ...fileTypeClass(row)] }, [h(ElIcon, null, { default: () => h(fileIconFor(row)) })]),
-      h("span", null, row.name)
+      h("span", { class: ["file-icon", row.kind || fileKind(row)] }, [h(ElIcon, null, { default: () => h(fileIconFor(row)) })]),
+      h("span", { class: "file-name-text" }, row.name)
     ]
   );
 }
 
-function renderActionMenu(row) {
-  const actions = [
-    { label: "打开", icon: FolderOpen, handler: () => openItem(row) },
-    row.type === "file" && { label: "下载", icon: Download, handler: () => download(row) },
-    canPreview(row) && { label: "预览", icon: Eye, handler: () => preview(row) },
-    { label: "重命名", icon: Pencil, handler: () => promptRename(row) },
-    { label: "移动", icon: Move, handler: () => promptMove(row) },
-    row.type === "file" && { label: "复制", icon: Copy, handler: () => promptCopy(row) },
-    row.type === "file" && { label: "分享", icon: Share2, handler: () => share(row) },
-    { label: "删除", icon: Trash2, class: "dropdown-danger", divided: true, handler: () => deleteOne(row) }
-  ].filter(Boolean);
-
+function renderActionButton(row) {
   return h(
-    ElDropdown,
+    "button",
     {
-      ref: (el) => setRowDropdownRef(row.path, el),
-      trigger: "click",
-      showArrow: false,
-      popperClass: "drive-dropdown-popper",
-      onVisibleChange: (visible) => {
-        if (visible) closeContextMenu();
-      },
-      onClick: (event) => event.stopPropagation()
+      class: "table-action-button",
+      type: "button",
+      "aria-label": `${row.name} 操作`,
+      onClick: (event) => openRowContextMenu(row, null, event, { anchor: "button" })
     },
-    {
-      default: () =>
-        h(
-          ElButton,
-          {
-            size: "small",
-            text: true,
-            onClick: (event) => {
-              event.stopPropagation();
-              closeContextMenu();
-            }
-          },
-          { default: () => "操作" }
-        ),
-      dropdown: () =>
-        h(
-          ElDropdownMenu,
-          null,
-          {
-            default: () =>
-              actions.map((action) =>
-                h(
-                  ElDropdownItem,
-                  {
-                    icon: action.icon,
-                    class: action.class,
-                    divided: action.divided,
-                    onClick: action.handler
-                  },
-                  { default: () => action.label }
-                )
-              )
-          }
-        )
-    }
+    [h("span", null, "操作")]
   );
 }
 
-function setRowDropdownRef(path, el) {
-  if (el) rowDropdownRefs.set(path, el);
-  else rowDropdownRefs.delete(path);
-}
-
-function closeRowDropdowns() {
-  for (const dropdown of rowDropdownRefs.values()) dropdown?.handleClose?.();
-}
-
-function openRowContextMenu(row, column, event) {
+function openRowContextMenu(row, column, event, options = {}) {
   event.preventDefault();
-  closeRowDropdowns();
+  event.stopPropagation?.();
   const menuWidth = 164;
   const itemCount = 4 + (row.type === "file" ? 3 : 0) + (canPreview(row) ? 1 : 0);
   const menuHeight = Math.min(360, 14 + itemCount * 40);
+  const rect = options.anchor === "button" ? event.currentTarget?.getBoundingClientRect?.() : null;
+  const x = rect ? rect.right - menuWidth : event.clientX;
+  const y = rect ? rect.bottom + 6 : event.clientY;
   contextMenu.item = row;
-  contextMenu.x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
-  contextMenu.y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
+  contextMenu.x = Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8));
+  contextMenu.y = Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8));
   contextMenu.visible = true;
 }
 
@@ -592,22 +537,31 @@ function fileKind(item) {
 }
 
 function fileIconFor(item) {
-  return {
-    folder: Folder,
-    image: FileImage,
-    video: FileVideo,
-    audio: FileAudio,
-    archive: FileArchive,
-    pdf: FileType,
-    spreadsheet: FileSpreadsheet,
-    code: FileCode,
-    text: FileText,
-    unknown: FileQuestion
-  }[fileKind(item)];
+  return fileIcons[item.kind || fileKind(item)] || FileQuestion;
 }
 
-function fileTypeClass(item) {
-  return [fileKind(item)];
+const fileIcons = {
+  folder: markRaw(Folder),
+  image: markRaw(FileImage),
+  video: markRaw(FileVideo),
+  audio: markRaw(FileAudio),
+  archive: markRaw(FileArchive),
+  pdf: markRaw(FileType),
+  spreadsheet: markRaw(FileSpreadsheet),
+  code: markRaw(FileCode),
+  text: markRaw(FileText),
+  unknown: markRaw(FileQuestion)
+};
+
+function normalizeFileItem(item) {
+  const kind = fileKind(item);
+  return {
+    ...item,
+    kind,
+    icon: fileIcons[kind] || FileQuestion,
+    sizeLabel: item.type === "folder" ? "文件夹" : formatSize(item.size),
+    modifiedAtLabel: formatTime(item.modifiedAt)
+  };
 }
 
 function toggleView() {
@@ -628,7 +582,7 @@ function formatSize(size = 0) {
 
 function formatTime(value) {
   if (!value) return "-";
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return dateTimeFormatter.format(new Date(value));
 }
 
 function download(item) {
