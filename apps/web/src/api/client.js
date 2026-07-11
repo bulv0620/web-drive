@@ -1,13 +1,36 @@
 let unauthorizedHandler = null;
+let sessionCheck = null;
 
 export function onUnauthorized(handler) {
   unauthorizedHandler = handler;
 }
 
-async function request(path, options = {}) {
-  const headers = options.raw ? options.headers || {} : { "content-type": "application/json", ...(options.headers || {}) };
+export async function authenticatedFetch(path, options = {}) {
+  const { skipUnauthorizedHandler = false, ...fetchOptions } = options;
   const response = await fetch(path, {
     credentials: "include",
+    ...fetchOptions
+  });
+  if (response.status === 401 && !skipUnauthorizedHandler) {
+    const error = new Error("authentication required");
+    error.status = 401;
+    unauthorizedHandler?.(error);
+  }
+  return response;
+}
+
+export function checkSession() {
+  if (!sessionCheck) {
+    sessionCheck = request("/api/auth/me").finally(() => {
+      sessionCheck = null;
+    });
+  }
+  return sessionCheck;
+}
+
+async function request(path, options = {}) {
+  const headers = options.raw ? options.headers || {} : { "content-type": "application/json", ...(options.headers || {}) };
+  const response = await authenticatedFetch(path, {
     headers,
     ...options
   });
@@ -25,7 +48,6 @@ async function request(path, options = {}) {
   if (!response.ok) {
     const error = new Error(data.error || "request failed");
     error.status = response.status;
-    if (response.status === 401 && !options.skipUnauthorizedHandler) unauthorizedHandler?.(error);
     throw error;
   }
   return data;
@@ -33,7 +55,7 @@ async function request(path, options = {}) {
 
 export const api = {
   app: () => request("/api/app"),
-  me: () => request("/api/auth/me"),
+  me: checkSession,
   login: (payload) => request("/api/auth/login", { method: "POST", body: JSON.stringify(payload), skipUnauthorizedHandler: true }),
   logout: () => request("/api/auth/logout", { method: "POST", body: "{}" }),
   files: (params) => request(`/api/files?${new URLSearchParams(params)}`),

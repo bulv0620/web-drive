@@ -50,6 +50,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight, ImageOff, LoaderCircle } from "@lucide/vue";
+import { checkSession } from "../api/client.js";
 
 const props = defineProps({
   src: {
@@ -122,6 +123,7 @@ function handleError(event) {
   if (failedUrl !== props.src) return;
   failedSrc.value = failedUrl;
   loadedSrc.value = "";
+  checkSession().catch(() => {});
 }
 </script>
 

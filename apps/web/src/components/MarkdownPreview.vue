@@ -24,7 +24,7 @@
       view-class="markdown-preview-scroll-view"
     >
       <article ref="paperRef" class="markdown-preview-paper">
-        <div class="markdown-body" @click="handleContentClick" v-html="html" />
+        <div class="markdown-body" @click="handleContentClick" @error.capture="handleResourceError" v-html="html" />
       </article>
     </el-scrollbar>
   </div>
@@ -33,6 +33,7 @@
 <script setup>
 import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { FileWarning, LoaderCircle, RefreshCw } from "@lucide/vue";
+import { authenticatedFetch, checkSession } from "../api/client.js";
 
 const props = defineProps({
   src: {
@@ -96,8 +97,7 @@ async function loadMarkdown() {
       import("marked"),
       import("highlight.js/lib/common")
     ]);
-    const response = await fetch(props.src, {
-      credentials: "same-origin",
+    const response = await authenticatedFetch(props.src, {
       signal: requestController.signal
     });
     if (!response.ok) throw new Error(`Markdown request failed: ${response.status}`);
@@ -208,6 +208,11 @@ function handleContentClick(event) {
 
   event.preventDefault();
   window.open(link.href, "_blank", "noopener,noreferrer");
+  if (link.dataset.driveLink === "true") checkSession().catch(() => {});
+}
+
+function handleResourceError() {
+  checkSession().catch(() => {});
 }
 </script>
 

@@ -7,9 +7,17 @@ import { router } from "./router.js";
 import { applyAuth } from "./store.js";
 import "./style.css";
 
-onUnauthorized(() => {
+let redirectingToLogin = false;
+
+onUnauthorized(async () => {
   applyAuth(null);
-  if (router.currentRoute.value.name !== "login") router.push("/login");
+  if (router.currentRoute.value.name === "login" || redirectingToLogin) return;
+  redirectingToLogin = true;
+  try {
+    await router.replace("/login");
+  } finally {
+    redirectingToLogin = false;
+  }
 });
 
 createApp(App).use(ElementPlus).use(router).mount("#app");

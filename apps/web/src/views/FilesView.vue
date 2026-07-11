@@ -421,7 +421,7 @@ import {
   Upload,
   X
 } from "@lucide/vue";
-import { api } from "../api/client.js";
+import { api, checkSession } from "../api/client.js";
 import FilePreviewOverlay from "../components/FilePreviewOverlay.vue";
 import FileIcon from "../components/FileIcon.vue";
 import { dateLocale, locale, localeToggleLabel, t, toggleLocale, uiError } from "../i18n.js";
@@ -842,6 +842,7 @@ function formatTime(value) {
 
 function download(item) {
   window.open(`/api/files/download?${new URLSearchParams({ path: item.path })}`, "_blank");
+  checkSession().catch(() => {});
 }
 
 function downloadSelected() {

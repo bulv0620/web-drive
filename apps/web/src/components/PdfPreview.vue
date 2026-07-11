@@ -82,6 +82,7 @@
 <script setup>
 import { nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { FileWarning, LoaderCircle, Minus, Plus, RefreshCw } from "@lucide/vue";
+import { authenticatedFetch } from "../api/client.js";
 
 const props = defineProps({
   src: {
@@ -188,8 +189,7 @@ async function loadPdf() {
     const [{ getDocument }, workerModule, response] = await Promise.all([
       import("pdfjs-dist"),
       import("pdfjs-dist/build/pdf.worker.min.mjs"),
-      fetch(props.src, {
-        credentials: "same-origin",
+      authenticatedFetch(props.src, {
         signal: fetchController.signal
       })
     ]);

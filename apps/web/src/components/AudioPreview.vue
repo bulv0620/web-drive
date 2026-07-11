@@ -42,6 +42,7 @@
 <script setup>
 import { ref, watch } from "vue";
 import { AudioLines, CircleAlert, LoaderCircle, RotateCcw } from "@lucide/vue";
+import { checkSession } from "../api/client.js";
 
 const props = defineProps({
   src: {
@@ -99,6 +100,7 @@ function handleReady() {
 function handleError() {
   ready.value = false;
   failed.value = true;
+  checkSession().catch(() => {});
 }
 </script>
 

@@ -33,6 +33,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { FileWarning, LoaderCircle, RefreshCw } from "@lucide/vue";
+import { authenticatedFetch } from "../api/client.js";
 import { codeLanguageFor } from "../utils/file-icons.js";
 
 const props = defineProps({
@@ -98,8 +99,7 @@ async function loadSource() {
   try {
     const [{ codeToHtml }, response] = await Promise.all([
       import("shiki"),
-      fetch(props.src, {
-        credentials: "same-origin",
+      authenticatedFetch(props.src, {
         signal: requestController.signal
       })
     ]);
