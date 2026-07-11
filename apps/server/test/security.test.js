@@ -77,14 +77,14 @@ test("upload file names cannot smuggle drive paths", async () => {
   }
 });
 
-test("chunk assembly preserves order and private permissions", async () => {
+test("chunk assembly preserves order and private permissions without accumulating listeners", async () => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "webdrive-assemble-"));
   const assembled = path.join(root, "assembled.bin");
   try {
-    await fs.promises.writeFile(path.join(root, "0.part"), "first-");
-    await fs.promises.writeFile(path.join(root, "1.part"), "second");
-    await assembleChunks(root, 2, assembled);
-    assert.equal(await fs.promises.readFile(assembled, "utf8"), "first-second");
+    const parts = Array.from({ length: 12 }, (_, index) => `part-${index};`);
+    await Promise.all(parts.map((content, index) => fs.promises.writeFile(path.join(root, `${index}.part`), content)));
+    await assembleChunks(root, parts.length, assembled);
+    assert.equal(await fs.promises.readFile(assembled, "utf8"), parts.join(""));
     assert.equal((await fs.promises.stat(assembled)).mode & 0o777, 0o600);
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });

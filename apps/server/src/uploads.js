@@ -92,28 +92,13 @@ async function existingChunks(config, uploadId) {
 }
 
 export async function assembleChunks(directory, totalChunks, assembledPath) {
-  const output = fs.createWriteStream(assembledPath, { mode: 0o600 });
-  try {
+  async function* chunks() {
     for (let index = 0; index < totalChunks; index += 1) {
-      await pipeline(fs.createReadStream(path.join(directory, `${index}.part`)), output, { end: false });
+      yield* fs.createReadStream(path.join(directory, `${index}.part`));
     }
-    await new Promise((resolve, reject) => {
-      const handleError = (error) => {
-        output.off("finish", handleFinish);
-        reject(error);
-      };
-      const handleFinish = () => {
-        output.off("error", handleError);
-        resolve();
-      };
-      output.once("error", handleError);
-      output.once("finish", handleFinish);
-      output.end();
-    });
-  } catch (error) {
-    output.destroy();
-    throw error;
   }
+
+  await pipeline(chunks(), fs.createWriteStream(assembledPath, { mode: 0o600 }));
 }
 
 export async function createUpload(config, session, payload) {
