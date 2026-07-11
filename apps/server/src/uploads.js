@@ -9,11 +9,33 @@ import { writeLocalFile } from "./smb.js";
 const tasks = new Map();
 const uploadIdPattern = /^[a-f0-9]{64}$/;
 let tempMutationQueue = Promise.resolve();
+const unsupportedChmodErrors = new Set(["EACCES", "EPERM", "ENOTSUP", "EROFS"]);
 
 function withTempMutationLock(operation) {
   const result = tempMutationQueue.then(operation, operation);
   tempMutationQueue = result.catch(() => {});
   return result;
+}
+
+async function chmodIfSupported(target, mode) {
+  try {
+    await fs.promises.chmod(target, mode);
+    return true;
+  } catch (error) {
+    if (unsupportedChmodErrors.has(error.code)) return false;
+    throw error;
+  }
+}
+
+async function verifyDirectoryWritable(directory) {
+  const probe = path.join(directory, `.webdrive-write-test-${process.pid}-${crypto.randomBytes(8).toString("hex")}`);
+  try {
+    await fs.promises.writeFile(probe, "", { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    throw new Error(`upload temporary directory is not writable: ${error.message || error}`);
+  } finally {
+    await fs.promises.rm(probe, { force: true }).catch(() => {});
+  }
 }
 
 function validateUploadId(uploadId) {
@@ -122,7 +144,7 @@ export async function createUpload(config, session, payload) {
     createdAt: new Date().toISOString()
   };
   await fs.promises.mkdir(taskDir(config, uploadId), { recursive: true, mode: 0o700 });
-  await fs.promises.chmod(taskDir(config, uploadId), 0o700);
+  await chmodIfSupported(taskDir(config, uploadId), 0o700);
   tasks.set(uploadId, task);
   const uploadedChunks = await existingChunks(config, uploadId);
   return {
@@ -159,7 +181,7 @@ export async function writeChunk(config, session, req, uploadId, index) {
     if (tempBytes - existingSize + body.length > config.uploadMaxTempBytes) throw new Error("upload temporary storage quota exceeded");
     await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
     await fs.promises.writeFile(filePath, body, { mode: 0o600 });
-    await fs.promises.chmod(filePath, 0o600);
+    await chmodIfSupported(filePath, 0o600);
     return { uploadId: safeId, index: chunkIndex, size: body.length };
   });
 }
@@ -212,7 +234,8 @@ export async function cancelUpload(config, session, uploadId) {
 export async function prepareUploadTemp(config) {
   const root = path.resolve(config.uploadTempDir);
   await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
-  await fs.promises.chmod(root, 0o700);
+  await chmodIfSupported(root, 0o700);
+  await verifyDirectoryWritable(root);
   const cutoff = Date.now() - config.uploadTaskTtlSeconds * 1000;
   const entries = await fs.promises.readdir(root, { withFileTypes: true });
   for (const entry of entries) {
@@ -223,11 +246,11 @@ export async function prepareUploadTemp(config) {
       await fs.promises.rm(directory, { recursive: true, force: true });
       continue;
     }
-    await fs.promises.chmod(directory, 0o700);
+    await chmodIfSupported(directory, 0o700);
     for (const name of await fs.promises.readdir(directory)) {
       const filePath = path.join(directory, name);
       const fileStat = await fs.promises.lstat(filePath);
-      if (fileStat.isFile()) await fs.promises.chmod(filePath, 0o600);
+      if (fileStat.isFile()) await chmodIfSupported(filePath, 0o600);
     }
   }
 }

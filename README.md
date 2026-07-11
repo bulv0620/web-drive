@@ -150,7 +150,7 @@ Windows 示例：
 UPLOAD_TEMP_HOST_DIR=D:/nas/webdrive-temp
 ```
 
-更新配置后重新执行 compose 启动命令。容器以非 root 用户运行，Linux 主机上的上传目录需要允许 UID/GID `1000` 写入。若 SMB 服务运行在 Docker 宿主机，可在 `SMB_SHARE` 中使用 `//host.docker.internal/share`；compose 已配置对应的宿主机映射。
+更新配置后重新执行 compose 启动命令。容器以非 root 用户运行，Linux 主机上的上传目录需要允许 UID/GID `1000` 写入。服务会在文件系统支持时把缓存权限收紧到 `0700/0600`；NAS ACL 或 bind mount 不允许容器执行 `chmod` 时会跳过权限修改，但仍会通过实际写入探测确认目录可用。若 SMB 服务运行在 Docker 宿主机，可在 `SMB_SHARE` 中使用 `//host.docker.internal/share`；compose 已配置对应的宿主机映射。
 
 常用运维命令：
 

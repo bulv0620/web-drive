@@ -47,6 +47,23 @@ test("upload cancellation rejects traversal and enforces session ownership", asy
   }
 });
 
+test("writable NAS mounts can start when chmod is not permitted", async () => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "webdrive-nas-mount-"));
+  const originalChmod = fs.promises.chmod;
+  fs.promises.chmod = async () => {
+    const error = new Error("operation not permitted");
+    error.code = "EPERM";
+    throw error;
+  };
+  try {
+    await prepareUploadTemp(uploadConfig(root));
+    assert.deepEqual(await fs.promises.readdir(root), []);
+  } finally {
+    fs.promises.chmod = originalChmod;
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("upload file names cannot smuggle drive paths", async () => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "webdrive-name-"));
   try {
