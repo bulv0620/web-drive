@@ -54,8 +54,12 @@ function readToken(req) {
   return parseCookies(req.headers.cookie)[cookieName];
 }
 
-function clearCookie(res) {
-  res.setHeader("set-cookie", `${cookieName}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+function cookieSecurity(config) {
+  return config.authCookieSecure ? "; Secure" : "";
+}
+
+function clearCookie(res, config) {
+  res.setHeader("set-cookie", `${cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${cookieSecurity(config)}`);
 }
 
 function pruneExpiredSessions(now = Date.now()) {
@@ -72,10 +76,20 @@ export function createSession(res, user, config) {
   const createdAt = Date.now();
   const expiresAt = createdAt + ttlSeconds * 1000;
   const token = createToken(sid, expiresAt, config.authTokenSecret);
-  sessions.set(sid, { ...user, createdAt, expiresAt });
+  const sameUserSessions = [...sessions.entries()]
+    .filter(([, session]) => session.username === user.username)
+    .sort((a, b) => a[1].createdAt - b[1].createdAt);
+  while (sameUserSessions.length >= config.authMaxSessionsPerUser) {
+    sessions.delete(sameUserSessions.shift()[0]);
+  }
+  const allSessions = [...sessions.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt);
+  while (allSessions.length >= config.authMaxSessions) {
+    sessions.delete(allSessions.shift()[0]);
+  }
+  sessions.set(sid, { ...user, id: sid, createdAt, expiresAt });
   res.setHeader(
     "set-cookie",
-    `${cookieName}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ttlSeconds}; Expires=${new Date(expiresAt).toUTCString()}`
+    `${cookieName}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${ttlSeconds}; Expires=${new Date(expiresAt).toUTCString()}${cookieSecurity(config)}`
   );
   return { token, expiresAt };
 }
@@ -97,13 +111,13 @@ export function currentSession(req, config) {
 export function destroySession(req, res, config) {
   const payload = verifyToken(readToken(req), config.authTokenSecret);
   if (payload) sessions.delete(payload.sid);
-  clearCookie(res);
+  clearCookie(res, config);
 }
 
 export function requireSession(req, res, config) {
   const session = currentSession(req, config);
   if (session) return session;
-  clearCookie(res);
+  clearCookie(res, config);
   res.writeHead(401, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
   return null;

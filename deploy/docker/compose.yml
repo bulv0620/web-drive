@@ -10,10 +10,18 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: ${PORT:-12600}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       UPLOAD_TEMP_DIR: /data/uploads-temp
     ports:
-      - "${PORT:-12600}:${PORT:-12600}"
+      - "${PUBLISH_HOST:-127.0.0.1}:${PORT:-12600}:${PORT:-12600}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${UPLOAD_TEMP_HOST_DIR:-../../data/uploads-temp}:/data/uploads-temp
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

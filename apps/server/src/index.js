@@ -1,20 +1,21 @@
 import http from "node:http";
-import fs from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { loadEnvFile } from "@web-drive/shared/env-file";
-import { json, notFound, readJson } from "@web-drive/shared/http-utils";
+import { applySecurityHeaders, isCrossOriginMutation, json, notFound, readJson } from "@web-drive/shared/http-utils";
 import { serveStaticWeb } from "@web-drive/shared/static-web";
 import { loadConfig } from "./config.js";
 import { currentSession, createSession, destroySession, requireSession } from "./session.js";
-import { basename, contentTypeFor, encodeContentDisposition, joinDrivePath, normalizeDrivePath } from "./path-utils.js";
-import { completeUpload, cancelUpload, createUpload, writeChunk } from "./uploads.js";
-import { copyFile, listDirectory, mkdir, remove, rename, statPath, streamFile, verifyLogin } from "./smb.js";
+import { basename, contentTypeFor, encodeContentDisposition, joinDrivePath, normalizeDrivePath, previewContentTypeFor } from "./path-utils.js";
+import { completeUpload, cancelUpload, createUpload, prepareUploadTemp, writeChunk } from "./uploads.js";
+import { copyPath, createFileReadStream, listDirectory, mkdir, remove, rename, statPath, verifyLogin } from "./smb.js";
 import { createShare, getShare } from "./shares.js";
+import { clearLoginFailures, loginLimitStatus, recordLoginFailure } from "./login-rate-limit.js";
 
 loadEnvFile(".env");
 loadEnvFile(".env.server");
 
 const config = loadConfig();
-await fs.promises.mkdir(config.uploadTempDir, { recursive: true });
+await prepareUploadTemp(config);
 
 function sendError(res, error, statusCode = 400) {
   json(res, statusCode, { ok: false, error: error.message || String(error) });
@@ -28,24 +29,29 @@ function sessionPayload(req) {
 function publicConfig() {
   return {
     baseUrl: config.baseUrl,
-    smbShare: config.smbShare,
-    smbRoot: config.smbRoot,
-    smbDomain: config.smbDomain,
     uploadChunkSize: config.uploadChunkSize,
-    uploadTempDir: config.uploadTempDir
+    uploadMaxFileBytes: config.uploadMaxFileBytes
   };
 }
 
 async function login(req, res) {
+  let username = "";
   try {
     const body = await readJson(req, 1024 * 32);
-    const username = String(body.username || "").trim();
+    username = String(body.username || "").trim();
     const password = String(body.password || "");
     if (!username || !password) return sendError(res, new Error("请输入 SMB 用户名和密码"), 400);
+    const limit = loginLimitStatus(req, username, config);
+    if (!limit.allowed) {
+      res.setHeader("retry-after", limit.retryAfterSeconds);
+      return sendError(res, new Error("登录尝试过于频繁，请稍后再试"), 429);
+    }
     await verifyLogin(config, { username, password });
+    clearLoginFailures(req, username, config);
     const session = createSession(res, { username, password }, config);
     json(res, 200, { ok: true, user: { username }, auth: { expiresAt: new Date(session.expiresAt).toISOString() } });
   } catch {
+    if (username) recordLoginFailure(req, username, config);
     sendError(res, new Error("SMB 登录失败，请检查账号、密码或共享配置"), 401);
   }
 }
@@ -112,7 +118,7 @@ async function renameItem(req, res, session) {
 async function copyItem(req, res, session) {
   try {
     const body = await readJson(req, 1024 * 32);
-    await copyFile(config, session, normalizeDrivePath(body.path || "/"), normalizeDrivePath(body.target || "/"));
+    await copyPath(config, session, normalizeDrivePath(body.path || "/"), normalizeDrivePath(body.target || "/"));
     json(res, 200, { ok: true });
   } catch (error) {
     sendError(res, error);
@@ -169,47 +175,94 @@ async function abortUpload(req, res, session) {
 
 async function shareFile(req, res, session) {
   try {
-    const share = createShare(config, session, await readJson(req, 1024 * 32));
+    const body = await readJson(req, 1024 * 32);
+    const filePath = normalizeDrivePath(body.path || "/");
+    const info = await statPath(config, session, filePath);
+    if (info.type !== "file") throw new Error("only files can be shared");
+    const share = createShare(config, session, { ...body, path: filePath });
     json(res, 200, { ok: true, share });
   } catch (error) {
     sendError(res, error);
   }
 }
 
+function parseRange(rangeHeader, size) {
+  const range = String(rangeHeader || "").trim();
+  if (!range) return null;
+  if (!range.startsWith("bytes=") || range.includes(",")) return { unsatisfiable: true };
+  if (size <= 0) return { unsatisfiable: true };
+
+  const [startRaw, endRaw] = range.slice(6).split("-");
+  if (startRaw === "" && endRaw === "") return { unsatisfiable: true };
+
+  let start;
+  let end;
+  if (startRaw === "") {
+    const suffix = Number(endRaw);
+    if (!Number.isInteger(suffix) || suffix <= 0) return { unsatisfiable: true };
+    start = Math.max(size - suffix, 0);
+    end = size - 1;
+  } else {
+    start = Number(startRaw);
+    end = endRaw === "" ? size - 1 : Number(endRaw);
+    if (!Number.isInteger(start) || !Number.isInteger(end)) return { unsatisfiable: true };
+  }
+
+  if (start < 0 || end < start || start >= size) return { unsatisfiable: true };
+  return { start, end: Math.min(end, size - 1) };
+}
+
 async function sendDownload(req, res, credentials, filePath, inline = false) {
   try {
     const info = await statPath(config, credentials, filePath);
+    if (info.type !== "file") throw new Error("file not found");
     const filename = basename(filePath);
-    const range = req.headers.range || "";
+    const range = parseRange(req.headers.range, info.size);
+    if (range?.unsatisfiable) {
+      res.writeHead(416, {
+        "accept-ranges": "bytes",
+        "content-range": `bytes */${info.size}`,
+        "content-length": 0
+      });
+      res.end();
+      return;
+    }
+
+    const start = range ? range.start : 0;
+    const end = range ? range.end : Math.max(info.size - 1, 0);
+    const contentLength = info.size ? end - start + 1 : 0;
     const headers = {
       "accept-ranges": "bytes",
-      "content-type": contentTypeFor(filename),
-      "content-disposition": inline ? `inline; filename*=UTF-8''${encodeURIComponent(filename)}` : encodeContentDisposition(filename)
+      "content-type": inline ? previewContentTypeFor(filename) : contentTypeFor(filename),
+      "content-disposition": inline ? `inline; filename*=UTF-8''${encodeURIComponent(filename)}` : encodeContentDisposition(filename),
+      "content-length": contentLength
     };
-    let options = {};
-    let status = 200;
-    let size = info.size;
-    if (range.startsWith("bytes=")) {
-      const [startRaw, endRaw] = range.slice(6).split("-");
-      const start = Number(startRaw);
-      const end = endRaw ? Number(endRaw) : info.size - 1;
-      if (Number.isFinite(start) && Number.isFinite(end) && start <= end) {
-        options = { start, end };
-        status = 206;
-        size = end - start + 1;
-        headers["content-range"] = `bytes ${start}-${end}/${info.size}`;
-      }
+    if (range) {
+      headers["content-range"] = `bytes ${start}-${end}/${info.size}`;
     }
-    headers["content-length"] = size;
-    res.writeHead(status, headers);
-    streamFile(config, credentials, filePath, options).pipe(res);
+    res.writeHead(range ? 206 : 200, headers);
+
+    if (!contentLength) {
+      res.end();
+      return;
+    }
+
+    const stream = await createFileReadStream(config, credentials, filePath, { start, end });
+    await pipeline(stream, res);
   } catch (error) {
+    if (error?.code === "ERR_STREAM_PREMATURE_CLOSE") return;
+    if (res.headersSent) {
+      res.destroy(error);
+      return;
+    }
     sendError(res, error, 404);
   }
 }
 
 async function route(req, res) {
   const url = new URL(req.url, "http://localhost");
+
+  if (isCrossOriginMutation(req)) return sendError(res, new Error("cross-origin request rejected"), 403);
 
   if (url.pathname === "/healthz") return json(res, 200, { ok: true, app: "web-drive" });
   if (url.pathname === "/api/app") return json(res, 200, { ok: true, app: "web-drive", user: sessionPayload(req), config: publicConfig() });
@@ -249,11 +302,24 @@ async function route(req, res) {
 }
 
 const server = http.createServer((req, res) => {
+  applySecurityHeaders(req, res, { hsts: config.authCookieSecure });
   route(req, res).catch((error) => sendError(res, error, 500));
+});
+
+server.requestTimeout = 120_000;
+server.headersTimeout = 30_000;
+server.keepAliveTimeout = 5_000;
+server.maxRequestsPerSocket = 100;
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(`WebDrive is already running or port ${config.port} is occupied.`);
+  } else {
+    console.error("WebDrive failed to start:", error.message || error);
+  }
+  process.exitCode = 1;
 });
 
 server.listen(config.port, config.host, () => {
   console.log(`WebDrive listening on http://${config.host}:${config.port}`);
-  console.log(`SMB share: ${config.smbShare || "(not configured)"}, root: ${config.smbRoot}`);
-  console.log(`Upload temp dir: ${config.uploadTempDir}`);
+  console.log(`SMB backend configured: ${Boolean(config.smbShare)}`);
 });

@@ -4,6 +4,7 @@ import path from "node:path";
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
@@ -12,6 +13,9 @@ const contentTypes = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".ico": "image/x-icon",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".wasm": "application/wasm",
   ".woff": "font/woff",
   ".woff2": "font/woff2"
 };
@@ -37,7 +41,8 @@ export function serveStaticWeb(req, res, distDir = process.env.WEB_DIST_DIR || d
   const filePath = path.resolve(distDir, `.${requestedPath}`);
   const root = path.resolve(distDir);
 
-  if (!filePath.startsWith(root)) {
+  const relativePath = path.relative(root, filePath);
+  if (relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
     return sendIndex(res, distDir, req.method);
   }
 

@@ -19,10 +19,14 @@ FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
-COPY --from=build /app/package.json /app/package-lock.json ./
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/apps ./apps
-COPY --from=build /app/packages ./packages
+COPY --chown=node:node --from=build /app/package.json /app/package-lock.json ./
+COPY --chown=node:node --from=build /app/node_modules ./node_modules
+COPY --chown=node:node --from=build /app/apps ./apps
+COPY --chown=node:node --from=build /app/packages ./packages
+
+RUN mkdir -p /data/uploads-temp && chown -R node:node /data
+
+USER node
 
 EXPOSE 12600
 

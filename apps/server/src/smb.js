@@ -1,21 +1,7 @@
 import fs from "node:fs";
-import path from "node:path";
-import { createRequire } from "node:module";
-import SMB2 from "smb2";
+import { pipeline } from "node:stream/promises";
+import SMB2 from "@marsaud/smb2";
 import { basename, contentTypeFor, normalizeDrivePath, splitDrivePath } from "./path-utils.js";
-
-const require = createRequire(import.meta.url);
-const SMB2Request = require("smb2/lib/tools/smb2-forge").request;
-const DIRECTORY_ATTRIBUTE = 0x00000010;
-
-function call(client, method, ...args) {
-  return new Promise((resolve, reject) => {
-    client[method](...args, (error, result) => {
-      if (error) reject(error);
-      else resolve(result);
-    });
-  });
-}
 
 function smbPath(config, drivePath = "/") {
   const root = splitDrivePath(config.smbRoot);
@@ -23,65 +9,147 @@ function smbPath(config, drivePath = "/") {
   return [...root, ...target].join("\\");
 }
 
-function request(client, messageName, params) {
-  return new Promise((resolve, reject) => {
-    SMB2Request(messageName, params, client, (error, result) => {
-      if (error) reject(error);
-      else resolve(result);
-    });
-  });
+function closeClient(client) {
+  client.disconnect?.();
 }
 
-function bufferToNumber(buffer) {
-  if (!Buffer.isBuffer(buffer)) return Number(buffer || 0);
-  if (typeof buffer.readBigUInt64LE === "function") return Number(buffer.readBigUInt64LE(0));
-  return buffer.readUInt32LE(0) + buffer.readUInt32LE(4) * 2 ** 32;
+function normalizeError(error, fallback = "SMB operation failed") {
+  if (!error) return new Error(fallback);
+  if (error.message) return error;
+  return new Error(String(error || fallback));
 }
 
-function fileTimeToIso(buffer) {
-  if (!Buffer.isBuffer(buffer)) return "";
-  const value = BigInt(bufferToNumber(buffer));
-  if (value <= 0n) return "";
-  const unixMs = Number(value / 10000n - 11644473600000n);
-  if (!Number.isFinite(unixMs) || unixMs <= 0) return "";
-  return new Date(unixMs).toISOString();
+function isNotFound(error) {
+  return ["STATUS_OBJECT_NAME_NOT_FOUND", "STATUS_OBJECT_PATH_NOT_FOUND", "STATUS_NO_SUCH_FILE", "ENOENT"].includes(error?.code);
 }
 
-function isDirectoryEntry(entry) {
-  return Boolean(Number(entry?.FileAttributes || 0) & DIRECTORY_ATTRIBUTE);
+function isTransientDeleteError(error) {
+  return ["STATUS_DELETE_PENDING", "STATUS_DIRECTORY_NOT_EMPTY"].includes(error?.code);
 }
 
-function toItem(entry, parentPath) {
-  const name = entry.Filename;
-  const childPath = normalizeDrivePath(`${parentPath}/${name}`);
-  const isDirectory = isDirectoryEntry(entry);
+function toItem(name, stats, parentPath) {
+  const isFolder = stats.isDirectory();
   return {
     name,
-    path: childPath,
-    type: isDirectory ? "folder" : "file",
-    size: isDirectory ? 0 : bufferToNumber(entry.EndofFile),
-    modifiedAt: fileTimeToIso(entry.LastWriteTime || entry.ChangeTime),
-    mime: isDirectory ? "" : contentTypeFor(name)
+    path: normalizeDrivePath(`${parentPath}/${name}`),
+    type: isFolder ? "folder" : "file",
+    size: isFolder ? 0 : Number(stats.size || 0),
+    modifiedAt: stats.mtime instanceof Date ? stats.mtime.toISOString() : "",
+    mime: isFolder ? "" : contentTypeFor(name)
   };
 }
 
-async function listDirectoryEntries(client, config, drivePath = "/") {
-  const file = await request(client, "open_folder", { path: smbPath(config, drivePath) });
-  const entries = [];
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function destroyStream(stream) {
+  if (!stream || stream.destroyed) return Promise.resolve();
+  return new Promise((resolve) => {
+    stream.once("close", resolve);
+    stream.destroy();
+  });
+}
+
+async function pathExists(client, config, drivePath) {
   try {
-    while (true) {
-      try {
-        const batch = await request(client, "query_directory", file);
-        entries.push(...(batch || []));
-      } catch (error) {
-        if (error.code === "STATUS_NO_MORE_FILES") break;
-        throw error;
-      }
-    }
-  } finally {
-    await request(client, "close", file).catch(() => {});
+    await client.stat(smbPath(config, drivePath));
+    return true;
+  } catch (error) {
+    if (isNotFound(error)) return false;
+    return false;
   }
-  return entries.filter((entry) => entry.Filename !== "." && entry.Filename !== "..");
+}
+
+async function ensureDirectory(client, config, drivePath) {
+  let current = "/";
+  for (const part of splitDrivePath(drivePath)) {
+    current = normalizeDrivePath(`${current}/${part}`);
+    try {
+      const stats = await client.stat(smbPath(config, current));
+      if (!stats.isDirectory()) throw new Error(`${current} is not a folder`);
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+      await client.mkdir(smbPath(config, current));
+    }
+  }
+}
+
+async function removeWithClient(client, config, drivePath) {
+  const normalized = normalizeDrivePath(drivePath);
+  if (normalized === "/") throw new Error("root path is not writable");
+
+  let stats;
+  try {
+    stats = await client.stat(smbPath(config, normalized));
+  } catch (error) {
+    if (isNotFound(error) || error.code === "STATUS_DELETE_PENDING") return;
+    throw error;
+  }
+  if (!stats.isDirectory()) {
+    await client.unlink(smbPath(config, normalized)).catch((error) => {
+      if (error.code !== "STATUS_DELETE_PENDING" && !isNotFound(error)) throw error;
+    });
+    return;
+  }
+
+  const entries = await client.readdir(smbPath(config, normalized), { stats: true }).catch((error) => {
+    if (error.code === "STATUS_DELETE_PENDING" || isNotFound(error)) return [];
+    throw error;
+  });
+  for (const entry of entries) {
+    await removeWithClient(client, config, normalizeDrivePath(`${normalized}/${entry.name}`));
+  }
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await client.rmdir(smbPath(config, normalized));
+      return;
+    } catch (error) {
+      if (!isTransientDeleteError(error) || attempt === 2) throw error;
+      const remaining = await client.readdir(smbPath(config, normalized), { stats: true }).catch(() => []);
+      for (const entry of remaining) {
+        await removeWithClient(client, config, normalizeDrivePath(`${normalized}/${entry.name}`));
+      }
+      await delay(500);
+    }
+  }
+}
+
+async function copyPathWithClient(client, config, from, to) {
+  const source = normalizeDrivePath(from);
+  const target = normalizeDrivePath(to);
+  if (source === "/" || target === "/") throw new Error("root path is not writable");
+  if (target === source || target.startsWith(`${source}/`)) throw new Error("cannot copy a folder into itself");
+  if (await pathExists(client, config, target)) throw new Error("target already exists");
+
+  const stats = await client.stat(smbPath(config, source));
+  if (!stats.isDirectory()) {
+    const parent = target.split("/").slice(0, -1).join("/") || "/";
+    const parentStats = await client.stat(smbPath(config, parent));
+    if (!parentStats.isDirectory()) throw new Error("parent folder not found");
+    await copyFileWithClient(client, config, source, target);
+    return;
+  }
+
+  await client.mkdir(smbPath(config, target));
+  const entries = await client.readdir(smbPath(config, source), { stats: true });
+  for (const entry of entries) {
+    await copyPathWithClient(client, config, normalizeDrivePath(`${source}/${entry.name}`), normalizeDrivePath(`${target}/${entry.name}`));
+  }
+}
+
+async function copyFileWithClient(client, config, source, target) {
+  let input = null;
+  let output = null;
+  try {
+    output = await client.createWriteStream(smbPath(config, target));
+    input = await client.createReadStream(smbPath(config, source));
+    await pipeline(input, output);
+  } catch (error) {
+    await Promise.all([destroyStream(input), destroyStream(output)]);
+    await client.unlink(smbPath(config, target)).catch(() => {});
+    throw error;
+  }
 }
 
 export function createClient(config, credentials) {
@@ -90,7 +158,7 @@ export function createClient(config, credentials) {
   }
   return new SMB2({
     share: config.smbShare,
-    domain: config.smbDomain,
+    domain: config.smbDomain || "",
     username: credentials.username,
     password: credentials.password,
     autoCloseTimeout: 0
@@ -100,9 +168,9 @@ export function createClient(config, credentials) {
 export async function verifyLogin(config, credentials) {
   const client = createClient(config, credentials);
   try {
-    await call(client, "readdir", smbPath(config, "/"));
+    await client.readdir(smbPath(config, "/"));
   } finally {
-    client.close?.();
+    closeClient(client);
   }
 }
 
@@ -110,10 +178,12 @@ export async function listDirectory(config, credentials, drivePath = "/") {
   const client = createClient(config, credentials);
   try {
     const normalized = normalizeDrivePath(drivePath);
-    const entries = await listDirectoryEntries(client, config, normalized);
-    return entries.map((entry) => toItem(entry, normalized));
+    const entries = await client.readdir(smbPath(config, normalized), { stats: true });
+    return entries.map((entry) => toItem(entry.name, entry, normalized));
+  } catch (error) {
+    throw normalizeError(error);
   } finally {
-    client.close?.();
+    closeClient(client);
   }
 }
 
@@ -124,114 +194,101 @@ export async function statPath(config, credentials, drivePath) {
     if (normalized === "/") {
       return { name: "/", path: "/", type: "folder", size: 0, modifiedAt: "", mime: "" };
     }
-    const parent = normalized.split("/").slice(0, -1).join("/") || "/";
-    const name = basename(normalized);
-    const entries = await listDirectoryEntries(client, config, parent);
-    const entry = entries.find((item) => item.Filename === name);
-    if (!entry) throw new Error("path not found");
-    return toItem(entry, parent);
+    const stats = await client.stat(smbPath(config, normalized));
+    return toItem(basename(normalized), stats, normalized.split("/").slice(0, -1).join("/") || "/");
+  } catch (error) {
+    if (isNotFound(error)) throw new Error("path not found");
+    throw normalizeError(error);
   } finally {
-    client.close?.();
+    closeClient(client);
   }
 }
 
 export async function mkdir(config, credentials, drivePath) {
   const client = createClient(config, credentials);
   try {
-    await ensureDirectory(client, config, drivePath);
+    const normalized = normalizeDrivePath(drivePath);
+    if (normalized === "/") throw new Error("folder name is required");
+    const parent = normalized.split("/").slice(0, -1).join("/") || "/";
+    const parentStats = await client.stat(smbPath(config, parent));
+    if (!parentStats.isDirectory()) throw new Error("parent folder not found");
+    if (await pathExists(client, config, normalized)) throw new Error("path already exists");
+    await client.mkdir(smbPath(config, normalized));
   } finally {
-    client.close?.();
+    closeClient(client);
   }
 }
 
 export async function remove(config, credentials, drivePath) {
-  const client = createClient(config, credentials);
-  try {
-    await removeWithClient(client, config, drivePath);
-  } finally {
-    client.close?.();
+  let lastError = null;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const client = createClient(config, credentials);
+    try {
+      await removeWithClient(client, config, drivePath);
+      if (!(await pathExists(client, config, drivePath))) return;
+      lastError = new Error("delete is still pending");
+    } catch (error) {
+      if (!isTransientDeleteError(error)) throw error;
+      lastError = error;
+    } finally {
+      closeClient(client);
+    }
+    await delay(500);
   }
+  throw lastError || new Error("delete did not complete");
 }
 
 export async function rename(config, credentials, from, to) {
   const client = createClient(config, credentials);
   try {
-    await call(client, "rename", smbPath(config, from), smbPath(config, to));
+    const source = normalizeDrivePath(from);
+    const target = normalizeDrivePath(to);
+    if (source === "/" || target === "/") throw new Error("root path is not writable");
+    await client.stat(smbPath(config, source));
+    if (await pathExists(client, config, target)) throw new Error("target already exists");
+    await client.rename(smbPath(config, source), smbPath(config, target));
   } finally {
-    client.close?.();
+    closeClient(client);
   }
 }
 
-export async function copyFile(config, credentials, from, to) {
+export async function copyPath(config, credentials, from, to) {
   const client = createClient(config, credentials);
   try {
-    const buffer = await call(client, "readFile", smbPath(config, from));
-    await call(client, "writeFile", smbPath(config, to), buffer);
+    await copyPathWithClient(client, config, from, to);
   } finally {
-    client.close?.();
+    closeClient(client);
   }
 }
 
-export function streamFile(config, credentials, drivePath, options = {}) {
+export async function createFileReadStream(config, credentials, drivePath, options = {}) {
   const client = createClient(config, credentials);
-  const remote = smbPath(config, drivePath);
-  const stream = client.createReadStream(remote, options);
-  stream.on("close", () => client.close?.());
-  stream.on("error", () => client.close?.());
-  return stream;
+  try {
+    const stream = await client.createReadStream(smbPath(config, drivePath), options);
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      closeClient(client);
+    };
+    stream.once("close", close);
+    stream.once("end", close);
+    stream.once("error", close);
+    return stream;
+  } catch (error) {
+    closeClient(client);
+    throw normalizeError(error);
+  }
 }
 
 export async function writeLocalFile(config, credentials, localPath, drivePath) {
   const client = createClient(config, credentials);
-  await fs.promises.mkdir(path.dirname(localPath), { recursive: true });
   try {
     const parent = normalizeDrivePath(drivePath).split("/").slice(0, -1).join("/") || "/";
     await ensureDirectory(client, config, parent);
-    const read = fs.createReadStream(localPath);
-    const write = client.createWriteStream(smbPath(config, drivePath));
-    await new Promise((resolve, reject) => {
-      read.on("error", done);
-      write.on("error", done);
-      write.on("finish", resolve);
-      read.pipe(write);
-      function done(error) {
-        reject(error);
-      }
-    });
+    const output = await client.createWriteStream(smbPath(config, drivePath), { flags: "w" });
+    await pipeline(fs.createReadStream(localPath), output);
   } finally {
-    client.close?.();
+    closeClient(client);
   }
-}
-
-async function ensureDirectory(client, config, drivePath) {
-  const parts = splitDrivePath(drivePath);
-  let current = "";
-  for (const part of parts) {
-    current = current ? `${current}/${part}` : `/${part}`;
-    const remote = smbPath(config, current);
-    try {
-      await call(client, "readdir", remote);
-    } catch {
-      try {
-        await call(client, "mkdir", remote);
-      } catch {
-        await call(client, "readdir", remote);
-      }
-    }
-  }
-}
-
-async function removeWithClient(client, config, drivePath) {
-  const remote = smbPath(config, drivePath);
-  let names;
-  try {
-    names = await call(client, "readdir", remote);
-  } catch {
-    await call(client, "unlink", remote);
-    return;
-  }
-  for (const name of names.filter((item) => item !== "." && item !== "..")) {
-    await removeWithClient(client, config, normalizeDrivePath(`${drivePath}/${name}`));
-  }
-  await call(client, "rmdir", remote);
 }

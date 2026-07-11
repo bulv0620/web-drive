@@ -1,8 +1,8 @@
 <template>
   <AppShell :title="t('app.title')" :subtitle="currentPath">
-    <section class="panel file-panel">
+    <section class="panel file-panel" :class="{ 'has-selection': selectedRows.length }">
       <div class="breadcrumb-row">
-        <el-button :icon="ArrowLeft" :disabled="currentPath === '/'" circle @click="goUp" :aria-label="t('files.back')" />
+        <el-button class="common-button" :icon="ArrowLeft" :disabled="currentPath === '/'" circle @click="goUp" :aria-label="t('files.back')" />
         <nav class="path-navigator" :title="currentPath" :aria-label="currentPath">
           <div class="path-trail">
             <button class="path-crumb path-root" type="button" @click="openPath('/')">{{ t("files.allFiles") }}</button>
@@ -38,7 +38,7 @@
           <el-button class="desktop-file-action" :icon="FolderPlus" @click="promptCreateFolder">{{ t("files.newFolder") }}</el-button>
           <el-button class="desktop-file-action" type="primary" :icon="Upload" @click="fileInput?.click()">{{ t("files.upload") }}</el-button>
           <el-dropdown class="desktop-file-action" trigger="click" :show-arrow="false" popper-class="drive-dropdown-popper">
-            <el-button :icon="MoreHorizontal" circle :aria-label="t('files.moreActions')" />
+            <el-button class="common-button" :icon="MoreHorizontal" circle :aria-label="t('files.moreActions')" />
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item :icon="FolderUp" @click="folderInput?.click()">{{ t("files.uploadFolder") }}</el-dropdown-item>
@@ -120,9 +120,7 @@
               </div>
               <div v-for="item in items" :key="item.path" class="file-card" :class="{ selected: selectedMap.has(item.path) }" @dblclick="openItem(item)" @click="toggleGridSelection(item)">
                 <div class="file-card-head">
-                  <span class="file-icon" :class="item.kind">
-                    <el-icon><component :is="item.icon" /></el-icon>
-                  </span>
+                  <FileIcon :item="item" />
                   <el-checkbox :model-value="selectedMap.has(item.path)" @click.stop @change="toggleGridSelection(item)" />
                 </div>
                 <div class="file-card-name">{{ item.name }}</div>
@@ -158,9 +156,7 @@
                 @click.stop
                 @change="toggleGridSelection(item)"
               />
-              <span class="file-icon mobile-file-icon" :class="item.kind">
-                <el-icon><component :is="item.icon" /></el-icon>
-              </span>
+              <FileIcon :item="item" class="mobile-file-icon" />
               <div class="mobile-file-main">
                 <div class="mobile-file-name">{{ item.name }}</div>
                 <div class="mobile-file-meta">
@@ -186,49 +182,86 @@
       </div>
 
       <Transition name="upload-widget-fade">
-        <div v-if="tasks.length" class="upload-widget" :class="{ open: uploadPanelOpen }">
-          <Transition name="upload-panel-pop">
-            <div v-if="uploadPanelOpen" class="upload-panel">
-              <div class="upload-panel-head">
-                <div>
-                  <div class="upload-panel-title">{{ t("files.uploadTasks") }}</div>
-                  <div class="upload-panel-subtitle">{{ uploadSummary }}</div>
-                </div>
-                <el-button v-if="hasFinishedTasks" text size="small" @click="clearFinishedTasks">{{ t("files.clearFinished") }}</el-button>
-              </div>
-
-              <el-scrollbar class="upload-task-scrollbar" max-height="min(270px, calc(100dvh - 280px))">
-                <div class="upload-task-list">
-                  <div v-for="task in tasks" :key="task.id" class="upload-task" :class="`is-${task.status}`">
-                    <div class="upload-task-row">
-                      <span class="upload-task-name">{{ task.name }}</span>
-                      <span class="upload-task-status">{{ uploadStatusText(task) }}</span>
-                    </div>
-                    <el-progress
-                      :percentage="Math.round(task.progress)"
-                      :status="uploadProgressStatus(task)"
-                      :stroke-width="6"
-                      :show-text="false"
-                    />
-                  </div>
-                </div>
-              </el-scrollbar>
-            </div>
-          </Transition>
-
+        <div v-if="tasks.length" class="upload-widget">
           <button
             class="upload-orb"
             type="button"
             :aria-expanded="uploadPanelOpen"
             :aria-label="t('files.uploadTasks')"
             :style="{ '--upload-progress': `${overallUploadProgress * 3.6}deg` }"
-            @click="uploadPanelOpen = !uploadPanelOpen"
+            @click="uploadPanelOpen = true"
           >
             <el-icon><Upload /></el-icon>
             <span v-if="uploadOrbBadge" class="upload-orb-badge">{{ uploadOrbBadge }}</span>
           </button>
         </div>
       </Transition>
+
+      <el-dialog
+        v-model="uploadPanelOpen"
+        append-to-body
+        class="upload-dialog"
+        :width="isMobile ? 'calc(100vw - 24px)' : '720px'"
+        :show-close="false"
+        align-center
+      >
+        <template #header>
+          <div class="upload-dialog-head">
+            <div class="upload-dialog-heading">
+              <div class="upload-dialog-title">{{ t("files.uploadTasks") }}</div>
+              <div class="upload-dialog-subtitle">{{ uploadSummary }}</div>
+            </div>
+            <button class="upload-dialog-close" type="button" :aria-label="t('common.close')" @click="uploadPanelOpen = false">
+              <el-icon><X /></el-icon>
+            </button>
+          </div>
+        </template>
+
+        <div class="upload-dialog-body">
+          <div class="upload-dialog-actions">
+            <el-button v-if="hasPausableTasks" :icon="Pause" @click="pauseAllUploads">{{ t("upload.pauseAll") }}</el-button>
+            <el-button v-if="hasPausedTasks" :icon="Play" @click="resumeAllUploads">{{ t("upload.resumeAll") }}</el-button>
+            <el-button v-if="hasFailedTasks" :icon="RefreshCw" @click="retryFailedUploads">{{ t("upload.retryFailed") }}</el-button>
+            <el-button v-if="hasFinishedTasks" text @click="clearFinishedTasks">{{ t("files.clearFinished") }}</el-button>
+          </div>
+
+          <el-scrollbar class="upload-task-scrollbar" max-height="min(52dvh, 430px)">
+            <div v-if="tasks.length" class="upload-task-list">
+              <article v-for="task in tasks" :key="task.id" class="upload-task" :class="`is-${task.status}`">
+                <FileIcon :item="task" class="upload-task-icon" aria-hidden="true" />
+                <div class="upload-task-content">
+                  <div class="upload-task-row">
+                    <span class="upload-task-name" :title="task.name">{{ task.name }}</span>
+                    <span class="upload-task-status">{{ uploadTaskProgressText(task) }}</span>
+                  </div>
+
+                  <el-progress
+                    :percentage="Math.round(task.progress)"
+                    :status="uploadProgressStatus(task)"
+                    :stroke-width="5"
+                    :show-text="false"
+                  />
+
+                  <div class="upload-task-meta">
+                    <span>{{ formatSize(task.loadedBytes) }} / {{ formatSize(task.size) }}</span>
+                    <span>{{ uploadEtaText(task) }}</span>
+                  </div>
+
+                  <div v-if="task.errorMessage" class="upload-task-error">{{ task.errorMessage }}</div>
+                </div>
+
+                <div class="upload-task-actions">
+                  <el-button v-if="canPauseTask(task)" circle text :icon="Pause" :aria-label="t('upload.pause')" :title="t('upload.pause')" @click="pauseUploadTask(task)" />
+                  <el-button v-if="canResumeTask(task)" circle text :icon="Play" :aria-label="t('upload.resume')" :title="t('upload.resume')" @click="resumeUploadTask(task)" />
+                  <el-button v-if="canRetryTask(task)" circle text :icon="RotateCcw" :aria-label="t('upload.retry')" :title="t('upload.retry')" @click="retryUploadTask(task)" />
+                  <el-button v-if="canCancelTask(task)" circle text type="danger" :icon="X" :aria-label="t('upload.cancel')" :title="t('upload.cancel')" @click="cancelUploadTask(task)" />
+                </div>
+              </article>
+            </div>
+            <div v-else class="upload-empty-state">{{ t("files.noTasks") }}</div>
+          </el-scrollbar>
+        </div>
+      </el-dialog>
 
       <Transition name="mobile-action-menu-fade">
         <div v-if="actionMenuOpen" class="mobile-action-scrim" @click="actionMenuOpen = false" />
@@ -278,9 +311,43 @@
       </div>
     </el-dialog>
 
-    <el-dialog v-model="previewDialog" :title="previewItem?.name || t('files.preview')" width="min(900px, calc(100vw - 32px))">
-      <img v-if="previewUrl" class="preview-image" :src="previewUrl" :alt="previewItem?.name || 'preview'" />
-    </el-dialog>
+    <FilePreviewOverlay
+      :visible="previewOpen"
+      :item="previewItem"
+      :src="previewUrl"
+      :kind="previewKind"
+      :meta="previewMeta"
+      :image-index="previewImageIndex"
+      :image-total="previewImages.length"
+      :title="t('files.preview')"
+      :close-label="t('common.close')"
+      :download-label="t('files.download')"
+      :previous-label="t('files.previousImage')"
+      :next-label="t('files.nextImage')"
+      :image-loading-text="t('files.imageLoading')"
+      :image-load-failed-text="t('files.imageLoadFailed')"
+      :video-loading-text="t('files.videoLoading')"
+      :video-fallback-text="t('files.videoUnsupported')"
+      :audio-loading-text="t('files.audioLoading')"
+      :audio-fallback-text="t('files.audioUnsupported')"
+      :markdown-loading-text="t('files.markdownLoading')"
+      :markdown-load-failed-text="t('files.markdownLoadFailed')"
+      :text-loading-text="t('files.textLoading')"
+      :text-load-failed-text="t('files.textLoadFailed')"
+      :pdf-loading-text="t('files.pdfLoading')"
+      :pdf-load-failed-text="t('files.pdfLoadFailed')"
+      :pdf-toolbar-label="t('files.pdfToolbar')"
+      :pdf-zoom-out-label="t('files.pdfZoomOut')"
+      :pdf-zoom-in-label="t('files.pdfZoomIn')"
+      :pdf-fit-width-label="t('files.pdfFitWidth')"
+      :pdf-page-count-template="t('files.pdfPageCount', { current: '{current}', total: '{total}' })"
+      :pdf-page-label-template="t('files.pdfPageLabel', { current: '{current}', total: '{total}' })"
+      :retry-label="t('common.retry')"
+      @close="closePreview"
+      @download="download"
+      @previous-image="showPreviousImage"
+      @next-image="showNextImage"
+    />
 
     <Teleport to="body">
       <div v-if="contextMenu.visible" class="context-menu-layer" @mousedown="closeContextMenu" @click="closeContextMenu" @contextmenu.prevent="closeContextMenu">
@@ -325,25 +392,15 @@
 </template>
 
 <script setup>
-import { computed, h, markRaw, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElCheckbox, ElIcon, ElMessage, ElMessageBox } from "element-plus";
+import { ElCheckbox, ElMessage, ElMessageBox } from "element-plus";
 import {
   ALargeSmall,
   ArrowLeft,
   Copy,
   Download,
   Eye,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileText,
-  FileImage,
-  FileQuestion,
-  FileSpreadsheet,
-  FileType,
-  FileVideo,
-  Folder,
   FolderOpen,
   FolderPlus,
   FolderUp,
@@ -353,16 +410,23 @@ import {
   LogOut,
   MoreHorizontal,
   Move,
+  Pause,
   Pencil,
+  Play,
   RefreshCw,
+  RotateCcw,
   Search,
   Share2,
   Trash2,
-  Upload
+  Upload,
+  X
 } from "@lucide/vue";
 import { api } from "../api/client.js";
+import FilePreviewOverlay from "../components/FilePreviewOverlay.vue";
+import FileIcon from "../components/FileIcon.vue";
 import { dateLocale, locale, localeToggleLabel, t, toggleLocale, uiError } from "../i18n.js";
 import { applyAuth, state } from "../store.js";
+import { codeLanguageFor, fileKind, isPlainTextFile } from "../utils/file-icons.js";
 import AppShell from "./AppShell.vue";
 
 const router = useRouter();
@@ -387,9 +451,8 @@ const uploadPanelOpen = ref(false);
 const activeUploads = ref(0);
 const shareDialog = ref(false);
 const shareUrl = ref("");
-const previewDialog = ref(false);
+const previewOpen = ref(false);
 const previewItem = ref(null);
-const previewUrl = ref("");
 const loggingOut = ref(false);
 const contextMenu = reactive({ visible: false, x: 0, y: 0, item: null });
 const chunkSize = computed(() => Number(state.config.uploadChunkSize || 8 * 1024 * 1024));
@@ -397,8 +460,10 @@ const accountName = computed(() => state.user?.username || t("app.user"));
 const initial = computed(() => accountName.value.slice(0, 1).toUpperCase());
 const languageIcon = computed(() => (locale.value === "zh-CN" ? Languages : ALargeSmall));
 const uploadConcurrency = 3;
+const uploadChunkConcurrency = 3;
 const uploadQueue = [];
 const dateTimeFormatter = computed(() => new Intl.DateTimeFormat(dateLocale.value, { dateStyle: "medium", timeStyle: "short" }));
+const uploadTaskFiles = new Map();
 let uploadRefreshTimer = null;
 let mobileMediaQuery = null;
 
@@ -419,20 +484,41 @@ const allListSelected = computed(() => items.value.length > 0 && items.value.eve
 const someListSelected = computed(() => selectedRows.value.length > 0 && !allListSelected.value);
 const tableSortBy = computed(() => ({ key: sort.value, order: order.value }));
 const uploadActiveCount = computed(() => tasks.filter((task) => task.status === "uploading" || task.status === "pending").length);
+const uploadPausingCount = computed(() => tasks.filter((task) => task.status === "pausing").length);
+const uploadPausedCount = computed(() => tasks.filter((task) => task.status === "paused").length);
 const uploadDoneCount = computed(() => tasks.filter((task) => task.status === "done").length);
 const uploadErrorCount = computed(() => tasks.filter((task) => task.status === "error").length);
-const hasFinishedTasks = computed(() => tasks.some((task) => task.status === "done" || task.status === "error"));
+const uploadCanceledCount = computed(() => tasks.filter((task) => task.status === "canceled").length);
+const hasPausableTasks = computed(() => tasks.some((task) => canPauseTask(task)));
+const hasPausedTasks = computed(() => tasks.some((task) => canResumeTask(task)));
+const hasFailedTasks = computed(() => tasks.some((task) => canRetryTask(task)));
+const hasFinishedTasks = computed(() => tasks.some((task) => ["done", "error", "canceled"].includes(task.status)));
 const overallUploadProgress = computed(() => {
   if (!tasks.length) return 0;
   return tasks.reduce((sum, task) => sum + Number(task.progress || 0), 0) / tasks.length;
 });
-const uploadOrbBadge = computed(() => uploadActiveCount.value);
+const uploadOrbBadge = computed(() => uploadActiveCount.value + uploadPausingCount.value);
 const uploadSummary = computed(() => {
   const parts = [];
   if (uploadActiveCount.value) parts.push(t("files.uploadActive", { count: uploadActiveCount.value }));
+  if (uploadPausingCount.value) parts.push(t("files.uploadPausing", { count: uploadPausingCount.value }));
+  if (uploadPausedCount.value) parts.push(t("files.uploadPaused", { count: uploadPausedCount.value }));
   if (uploadDoneCount.value) parts.push(t("files.uploadDone", { count: uploadDoneCount.value }));
   if (uploadErrorCount.value) parts.push(t("files.uploadError", { count: uploadErrorCount.value }));
+  if (uploadCanceledCount.value) parts.push(t("files.uploadCanceled", { count: uploadCanceledCount.value }));
   return parts.join(" · ") || t("files.noTasks");
+});
+const previewKind = computed(() => previewKindFor(previewItem.value));
+const previewUrl = computed(() => (previewItem.value ? `/api/files/preview?${new URLSearchParams({ path: previewItem.value.path })}` : ""));
+const previewImages = computed(() => items.value.filter((item) => previewKindFor(item) === "image"));
+const previewImageIndex = computed(() => previewImages.value.findIndex((item) => item.path === previewItem.value?.path));
+const previewMeta = computed(() => {
+  const item = previewItem.value;
+  if (!item) return "";
+  const parts = [];
+  if (item.type === "file") parts.push(item.sizeLabel || formatSize(item.size));
+  if (item.modifiedAtLabel && item.modifiedAtLabel !== "-") parts.push(item.modifiedAtLabel);
+  return parts.join(" · ");
 });
 const sortableTableKeys = new Set(["name", "size", "modifiedAt"]);
 const tableRowEventHandlers = {
@@ -644,7 +730,7 @@ function renderFileNameCell(row) {
       }
     },
     [
-      h("span", { class: ["file-icon", row.kind || fileKind(row)] }, [h(ElIcon, null, { default: () => h(fileIconFor(row)) })]),
+      h(FileIcon, { item: row }),
       h("span", { class: "file-name-text" }, row.name)
     ]
   );
@@ -708,47 +794,26 @@ async function runContextAction(action) {
 }
 
 function canPreview(item) {
-  return item.type === "file" && /^image\//.test(item.mime || "");
+  return Boolean(previewKindFor(item));
 }
 
-function fileKind(item) {
-  if (item.type === "folder") return "folder";
+function previewKindFor(item) {
+  if (item?.type !== "file") return "";
+  const name = String(item.name || item.fileName || "").toLowerCase();
   const mime = String(item.mime || "").toLowerCase();
-  const ext = item.name.includes(".") ? item.name.split(".").pop().toLowerCase() : "";
-  if (mime.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"].includes(ext)) return "image";
-  if (mime.startsWith("video/") || ["mp4", "webm", "mov", "mkv", "avi", "m4v"].includes(ext)) return "video";
-  if (mime.startsWith("audio/") || ["mp3", "wav", "flac", "aac", "ogg", "m4a"].includes(ext)) return "audio";
-  if (["zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz"].includes(ext)) return "archive";
-  if (mime === "application/pdf" || ext === "pdf") return "pdf";
-  if (["xls", "xlsx", "csv", "ods", "numbers"].includes(ext)) return "spreadsheet";
-  if (["js", "ts", "jsx", "tsx", "vue", "html", "css", "scss", "json", "xml", "yml", "yaml", "md", "py", "go", "rs", "java", "c", "cpp", "cs", "php", "sh", "ps1"].includes(ext)) return "code";
-  if (mime.startsWith("text/") || ["txt", "log", "rtf"].includes(ext)) return "text";
-  return "unknown";
+  if (name.endsWith(".md") || mime.startsWith("text/markdown")) return "markdown";
+  const kind = item.kind || fileKind(item);
+  if (kind === "image" || kind === "video" || kind === "audio" || kind === "pdf") return kind;
+  if (codeLanguageFor(item)) return "code";
+  if (isPlainTextFile(item)) return "text";
+  return "";
 }
-
-function fileIconFor(item) {
-  return fileIcons[item.kind || fileKind(item)] || FileQuestion;
-}
-
-const fileIcons = {
-  folder: markRaw(Folder),
-  image: markRaw(FileImage),
-  video: markRaw(FileVideo),
-  audio: markRaw(FileAudio),
-  archive: markRaw(FileArchive),
-  pdf: markRaw(FileType),
-  spreadsheet: markRaw(FileSpreadsheet),
-  code: markRaw(FileCode),
-  text: markRaw(FileText),
-  unknown: markRaw(FileQuestion)
-};
 
 function normalizeFileItem(item) {
   const kind = fileKind(item);
   return {
     ...item,
     kind,
-    icon: fileIcons[kind] || FileQuestion,
     sizeLabel: item.type === "folder" ? t("files.folder") : formatSize(item.size),
     modifiedAtLabel: formatTime(item.modifiedAt)
   };
@@ -784,9 +849,24 @@ function downloadSelected() {
 }
 
 function preview(item) {
+  if (!canPreview(item)) return;
   previewItem.value = item;
-  previewUrl.value = `/api/files/preview?${new URLSearchParams({ path: item.path })}`;
-  previewDialog.value = true;
+  previewOpen.value = true;
+}
+
+function closePreview() {
+  previewOpen.value = false;
+  previewItem.value = null;
+}
+
+function showPreviousImage() {
+  if (previewImageIndex.value <= 0) return;
+  previewItem.value = previewImages.value[previewImageIndex.value - 1] || previewItem.value;
+}
+
+function showNextImage() {
+  if (previewImageIndex.value < 0 || previewImageIndex.value >= previewImages.value.length - 1) return;
+  previewItem.value = previewImages.value[previewImageIndex.value + 1] || previewItem.value;
 }
 
 async function promptCreateFolder() {
@@ -924,7 +1004,8 @@ async function uploadFiles(files) {
   for (const item of picked) {
     const task = createUploadTask(item);
     tasks.unshift(task);
-    uploadQueue.push({ file: item.file, task });
+    uploadTaskFiles.set(task.id, item.file);
+    enqueueUploadTask(task);
   }
   runUploadQueue();
 }
@@ -952,13 +1033,32 @@ function createUploadTask(item) {
   const parts = relative.split("/").filter(Boolean);
   const name = parts.pop() || item.file.name;
   const directory = parts.length ? `${currentPath.value.replace(/\/$/, "")}/${parts.join("/")}` : currentPath.value;
+  const mime = item.file.type || "";
+  const kind = fileKind({ name, mime, type: "file" });
   return reactive({
     id: `${Date.now()}-${Math.random()}`,
     directory,
     fileName: name,
+    mime,
+    kind,
     name: relative,
+    size: item.file.size,
+    loadedBytes: 0,
     progress: 0,
-    status: "pending"
+    speedBps: 0,
+    etaSeconds: null,
+    uploadedChunks: [],
+    totalChunks: 0,
+    uploadId: "",
+    retryCount: 0,
+    errorMessage: "",
+    status: "pending",
+    abortController: null,
+    cancelRequested: false,
+    enqueued: false,
+    running: false,
+    lastMetricAt: 0,
+    lastLoadedBytes: 0
   });
 }
 
@@ -1026,11 +1126,33 @@ async function createDroppedFolders(folders) {
   }
 }
 
+function enqueueUploadTask(task) {
+  if (!task || task.enqueued || task.status !== "pending") return;
+  task.enqueued = true;
+  uploadQueue.push(task);
+}
+
+function removeQueuedTask(task) {
+  const index = uploadQueue.findIndex((item) => item.id === task.id);
+  if (index >= 0) uploadQueue.splice(index, 1);
+  task.enqueued = false;
+}
+
 function runUploadQueue() {
   while (activeUploads.value < uploadConcurrency && uploadQueue.length) {
-    const next = uploadQueue.shift();
+    const task = uploadQueue.shift();
+    task.enqueued = false;
+    if (task.status !== "pending") continue;
+
+    const file = uploadTaskFiles.get(task.id);
+    if (!file) {
+      task.status = "error";
+      task.errorMessage = t("upload.fileMissing");
+      continue;
+    }
+
     activeUploads.value += 1;
-    uploadOne(next.file, next.task).finally(() => {
+    uploadOne(file, task).finally(() => {
       activeUploads.value -= 1;
       runUploadQueue();
     });
@@ -1038,28 +1160,220 @@ function runUploadQueue() {
 }
 
 async function uploadOne(file, task) {
+  if (task.status !== "pending") return;
   task.status = "uploading";
+  task.errorMessage = "";
+  task.cancelRequested = false;
+  task.running = true;
+  task.abortController = new AbortController();
+  task.lastMetricAt = performance.now();
+  task.lastLoadedBytes = task.loadedBytes || 0;
+
   try {
-    const init = await api.initUpload({ directory: task.directory, name: task.fileName, size: file.size, chunkSize: chunkSize.value });
-    const uploadId = init.task.uploadId;
-    const uploaded = new Set(init.task.uploadedChunks || []);
-    const totalChunks = init.task.totalChunks;
-    for (let index = 0; index < totalChunks; index += 1) {
-      if (!uploaded.has(index)) {
-        const start = index * chunkSize.value;
-        const end = Math.min(file.size, start + chunkSize.value);
-        await api.uploadChunk(uploadId, index, file.slice(start, end));
-      }
-      task.progress = ((index + 1) / totalChunks) * 96;
+    if (!task.uploadId) {
+      const init = await api.initUpload({ directory: task.directory, name: task.fileName, size: file.size, chunkSize: chunkSize.value });
+      const uploaded = new Set(init.task.uploadedChunks || []);
+      task.uploadId = init.task.uploadId;
+      task.totalChunks = init.task.totalChunks;
+      task.uploadedChunks = [...uploaded];
+      task.loadedBytes = uploadedBytesFromChunks(task, uploaded);
+      updateUploadProgress(task);
     }
-    await api.completeUpload({ uploadId });
+
+    const uploaded = new Set(task.uploadedChunks || []);
+    await uploadMissingChunks(file, task, uploaded);
+
+    if (task.cancelRequested || task.status === "canceled") return;
+    if (task.status === "paused" || task.status === "pausing") {
+      task.etaSeconds = null;
+      if (task.status === "pausing") task.status = "paused";
+      return;
+    }
+
+    await api.completeUpload({ uploadId: task.uploadId });
+    task.loadedBytes = task.size;
     task.progress = 100;
+    task.speedBps = 0;
+    task.etaSeconds = 0;
     task.status = "done";
     scheduleUploadRefresh();
   } catch (err) {
+    if (task.cancelRequested || task.status === "canceled" || err?.name === "AbortError") {
+      task.etaSeconds = null;
+      return;
+    }
+
     task.status = "error";
-    ElMessage.error(uiError(err, "files.uploadFailed"));
+    task.etaSeconds = null;
+    task.errorMessage = uiError(err, "files.uploadFailed");
+    ElMessage.error(task.errorMessage);
+  } finally {
+    task.abortController = null;
+    task.running = false;
   }
+}
+
+async function uploadMissingChunks(file, task, uploaded) {
+  const pendingChunks = [];
+  for (let index = 0; index < task.totalChunks; index += 1) {
+    if (!uploaded.has(index)) pendingChunks.push(index);
+  }
+
+  if (!pendingChunks.length) {
+    task.loadedBytes = uploadedBytesFromChunks(task, uploaded);
+    updateUploadProgress(task);
+    return;
+  }
+
+  let nextPendingIndex = 0;
+  let firstError = null;
+  const workerCount = Math.min(uploadChunkConcurrency, pendingChunks.length);
+  const takeNextChunk = () => pendingChunks[nextPendingIndex++];
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        if (firstError) return;
+        if (task.cancelRequested || task.status === "canceled") return;
+        if (task.status === "paused" || task.status === "pausing") {
+          task.etaSeconds = null;
+          return;
+        }
+
+        const index = takeNextChunk();
+        if (index === undefined) return;
+
+        const start = index * chunkSize.value;
+        const end = Math.min(file.size, start + chunkSize.value);
+        try {
+          await api.uploadChunk(task.uploadId, index, file.slice(start, end), { signal: task.abortController.signal });
+        } catch (err) {
+          if (task.cancelRequested || task.status === "canceled" || err?.name === "AbortError") return;
+          firstError = firstError || err;
+          task.abortController?.abort();
+          return;
+        }
+
+        if (task.cancelRequested || task.status === "canceled") return;
+
+        uploaded.add(index);
+        task.uploadedChunks = [...uploaded].sort((a, b) => a - b);
+        updateUploadMetrics(task, uploadedBytesFromChunks(task, uploaded));
+      }
+    })
+  );
+
+  if (firstError) throw firstError;
+}
+
+function uploadedBytesFromChunks(task, uploaded) {
+  let bytes = 0;
+  for (const index of uploaded) bytes += uploadChunkBytes(task, index);
+  return Math.min(task.size, bytes);
+}
+
+function uploadChunkBytes(task, index) {
+  const start = index * chunkSize.value;
+  return Math.max(0, Math.min(task.size, start + chunkSize.value) - start);
+}
+
+function updateUploadMetrics(task, loadedBytes) {
+  const now = performance.now();
+  const previousLoaded = task.lastLoadedBytes || 0;
+  const previousAt = task.lastMetricAt || now;
+  const seconds = Math.max((now - previousAt) / 1000, 0.001);
+  const delta = Math.max(0, loadedBytes - previousLoaded);
+
+  task.loadedBytes = loadedBytes;
+  updateUploadProgress(task);
+
+  if (delta > 0) {
+    const instantSpeed = delta / seconds;
+    task.speedBps = task.speedBps ? task.speedBps * 0.65 + instantSpeed * 0.35 : instantSpeed;
+    task.etaSeconds = task.speedBps > 0 ? Math.max(0, (task.size - task.loadedBytes) / task.speedBps) : null;
+    task.lastLoadedBytes = loadedBytes;
+    task.lastMetricAt = now;
+  }
+}
+
+function updateUploadProgress(task) {
+  if (task.size <= 0) {
+    task.progress = task.uploadedChunks?.length ? 96 : 0;
+    return;
+  }
+  task.progress = Math.min(96, (task.loadedBytes / task.size) * 96);
+}
+
+function pauseUploadTask(task) {
+  if (!canPauseTask(task)) return;
+  if (task.status === "pending") {
+    removeQueuedTask(task);
+    task.status = "paused";
+  } else {
+    task.status = "pausing";
+  }
+  task.etaSeconds = null;
+  runUploadQueue();
+}
+
+function resumeUploadTask(task) {
+  if (!canResumeTask(task)) return;
+  task.status = "pending";
+  task.errorMessage = "";
+  enqueueUploadTask(task);
+  runUploadQueue();
+}
+
+async function cancelUploadTask(task) {
+  if (!canCancelTask(task)) return;
+  task.cancelRequested = true;
+  task.status = "canceled";
+  task.etaSeconds = null;
+  removeQueuedTask(task);
+  task.abortController?.abort();
+
+  if (task.uploadId) {
+    try {
+      await api.cancelUpload({ uploadId: task.uploadId });
+    } catch {
+      // The active request may already have ended the task; cancel is best effort here.
+    }
+  }
+  runUploadQueue();
+}
+
+function retryUploadTask(task) {
+  if (!canRetryTask(task)) return;
+  task.retryCount += 1;
+  task.status = "pending";
+  task.errorMessage = "";
+  task.cancelRequested = false;
+  task.lastMetricAt = 0;
+  task.lastLoadedBytes = task.loadedBytes || 0;
+  enqueueUploadTask(task);
+  runUploadQueue();
+}
+
+function pauseAllUploads() {
+  tasks.forEach((task) => {
+    if (!canPauseTask(task)) return;
+    if (task.status === "pending") {
+      removeQueuedTask(task);
+      task.status = "paused";
+    } else {
+      task.status = "pausing";
+    }
+    task.etaSeconds = null;
+  });
+  runUploadQueue();
+}
+
+function resumeAllUploads() {
+  tasks.forEach((task) => resumeUploadTask(task));
+}
+
+function retryFailedUploads() {
+  tasks.forEach((task) => retryUploadTask(task));
 }
 
 function scheduleUploadRefresh() {
@@ -1071,7 +1385,10 @@ function scheduleUploadRefresh() {
 
 function clearFinishedTasks() {
   for (let index = tasks.length - 1; index >= 0; index -= 1) {
-    if (tasks[index].status === "done" || tasks[index].status === "error") tasks.splice(index, 1);
+    if (["done", "error", "canceled"].includes(tasks[index].status)) {
+      uploadTaskFiles.delete(tasks[index].id);
+      tasks.splice(index, 1);
+    }
   }
   if (!tasks.length) uploadPanelOpen.value = false;
 }
@@ -1080,12 +1397,56 @@ function uploadStatusText(task) {
   if (task.status === "pending") return t("upload.pending");
   if (task.status === "done") return t("upload.done");
   if (task.status === "error") return t("upload.error");
+  if (task.status === "pausing") return t("upload.pausing");
+  if (task.status === "paused") return t("upload.paused");
+  if (task.status === "canceled") return t("upload.canceled");
   return t("upload.uploading");
 }
 
 function uploadProgressStatus(task) {
   if (task.status === "done") return "success";
   if (task.status === "error") return "exception";
+  if (task.status === "pausing" || task.status === "paused" || task.status === "canceled") return "warning";
   return undefined;
+}
+
+function uploadTaskProgressText(task) {
+  if (task.status === "uploading" || task.status === "pending") return `${Math.round(task.progress)}%`;
+  return uploadStatusText(task);
+}
+
+function canPauseTask(task) {
+  return task.status === "pending" || task.status === "uploading";
+}
+
+function canResumeTask(task) {
+  return task.status === "paused" && !task.running;
+}
+
+function canRetryTask(task) {
+  return task.status === "error";
+}
+
+function canCancelTask(task) {
+  return ["pending", "uploading", "pausing", "paused", "error"].includes(task.status);
+}
+
+function uploadEtaText(task) {
+  if (task.status === "done") return t("upload.etaDone");
+  if (task.status === "pausing") return t("upload.etaPausing");
+  if (task.status === "paused") return t("upload.etaPaused");
+  if (task.status === "canceled" || task.status === "error") return "-";
+  if (Number.isFinite(task.etaSeconds)) return t("upload.eta", { time: formatDuration(task.etaSeconds) });
+  return t("upload.etaPending");
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(1, Math.ceil(seconds));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  const restSeconds = total % 60;
+  if (minutes < 60) return `${minutes}m ${restSeconds}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
 }
 </script>

@@ -44,11 +44,12 @@ export const api = {
   copyFile: (payload) => request("/api/files/copy", { method: "POST", body: JSON.stringify(payload) }),
   createShare: (payload) => request("/api/share", { method: "POST", body: JSON.stringify(payload) }),
   initUpload: (payload) => request("/api/upload/init", { method: "POST", body: JSON.stringify(payload) }),
-  uploadChunk: (uploadId, index, blob) => request(`/api/upload/chunk?${new URLSearchParams({ uploadId, index })}`, {
+  uploadChunk: (uploadId, index, blob, options = {}) => request(`/api/upload/chunk?${new URLSearchParams({ uploadId, index })}`, {
     method: "PUT",
     body: blob,
     raw: true,
-    headers: { "content-type": "application/octet-stream" }
+    headers: { "content-type": "application/octet-stream" },
+    signal: options.signal
   }),
   completeUpload: (payload) => request("/api/upload/complete", { method: "POST", body: JSON.stringify(payload) }),
   cancelUpload: (payload) => request("/api/upload/cancel", { method: "POST", body: JSON.stringify(payload) })

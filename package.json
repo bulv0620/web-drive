@@ -15,6 +15,7 @@
     "mock": "npm run start -w apps/mock",
     "server": "npm run start -w apps/server",
     "build:web": "npm run build -w apps/web",
+    "test": "npm run test -w apps/server",
     "docker": "docker compose --env-file .env -f deploy/docker/compose.yml up -d --build",
     "docker:up": "docker compose --env-file .env -f deploy/docker/compose.yml up -d --build",
     "docker:down": "docker compose --env-file .env -f deploy/docker/compose.yml down",
