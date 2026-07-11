@@ -3,12 +3,14 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 import test from "node:test";
 import { applySecurityHeaders, isCrossOriginMutation } from "@web-drive/shared/http-utils";
 import { serveStaticWeb } from "@web-drive/shared/static-web";
 import { previewContentTypeFor } from "../src/path-utils.js";
 import { createSession } from "../src/session.js";
 import { createShare } from "../src/shares.js";
+import { pipeToSmbFile } from "../src/smb.js";
 import { assembleChunks, cancelUpload, createUpload, prepareUploadTemp } from "../src/uploads.js";
 
 function uploadConfig(uploadTempDir) {
@@ -87,6 +89,44 @@ test("chunk assembly preserves order and private permissions", async () => {
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }
+});
+
+test("SMB upload closes the remote file handle exactly once", async () => {
+  const calls = { close: 0, options: null, content: "" };
+  const file = { FileId: Buffer.alloc(16) };
+  const client = {
+    async open(target, flags) {
+      assert.equal(target, "folder\\upload.txt");
+      assert.equal(flags, "w");
+      return file;
+    },
+    async createWriteStream(target, options) {
+      assert.equal(target, "folder\\upload.txt");
+      calls.options = options;
+      return new Writable({
+        write(chunk, encoding, callback) {
+          calls.content += chunk.toString();
+          callback();
+        }
+      });
+    },
+    async close(openFile) {
+      assert.equal(openFile, file);
+      calls.close += 1;
+      if (calls.close > 1) {
+        const error = new Error("file object had already been closed");
+        error.code = "STATUS_FILE_CLOSED";
+        throw error;
+      }
+    }
+  };
+
+  await pipeToSmbFile(client, "folder\\upload.txt", fs.createReadStream(new URL("security.test.js", import.meta.url)));
+
+  assert.equal(calls.options.fd, file);
+  assert.equal(calls.options.autoClose, false);
+  assert.match(calls.content, /SMB upload closes the remote file handle exactly once/);
+  assert.equal(calls.close, 1);
 });
 
 test("active document formats are served as plain text in preview", () => {

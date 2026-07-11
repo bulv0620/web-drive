@@ -152,6 +152,30 @@ async function copyFileWithClient(client, config, source, target) {
   }
 }
 
+export async function pipeToSmbFile(client, targetPath, input) {
+  let file = null;
+  let transferError = null;
+  try {
+    file = await client.open(targetPath, "w");
+    // @marsaud/smb2 closes path-based write streams in both _final and _destroy
+    // on modern Node.js. Own the handle here so the NAS receives one close only.
+    const output = await client.createWriteStream(targetPath, { fd: file, autoClose: false });
+    await pipeline(input, output);
+  } catch (error) {
+    transferError = error;
+  }
+
+  if (file) {
+    try {
+      await client.close(file);
+    } catch (error) {
+      if (!transferError) transferError = error;
+    }
+  }
+
+  if (transferError) throw transferError;
+}
+
 export function createClient(config, credentials) {
   if (!config.smbShare) {
     throw new Error("SMB_SHARE is required");
@@ -286,8 +310,7 @@ export async function writeLocalFile(config, credentials, localPath, drivePath) 
   try {
     const parent = normalizeDrivePath(drivePath).split("/").slice(0, -1).join("/") || "/";
     await ensureDirectory(client, config, parent);
-    const output = await client.createWriteStream(smbPath(config, drivePath), { flags: "w" });
-    await pipeline(fs.createReadStream(localPath), output);
+    await pipeToSmbFile(client, smbPath(config, drivePath), fs.createReadStream(localPath));
   } finally {
     closeClient(client);
   }
