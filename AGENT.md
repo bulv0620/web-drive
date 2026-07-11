@@ -97,15 +97,15 @@ npm run build:web
 - API 内统一使用以 `/` 开头的 drive path
 - `normalizeDrivePath()` 负责折叠分隔符、`.` 和 `..`
 - `smbPath()` 才把 drive path 与 `SMB_ROOT` 合并并转换为反斜杠 SMB 路径
-- 根路径 `/` 不允许重命名、移动、复制或删除
+- 根路径 `/` 不允许重命名、移动或删除
 
 SMB 适配集中在 `apps/server/src/smb.js`。当前使用 `@marsaud/smb2` 的 Promise API：
 
 - `readdir(path, { stats: true })` 同时获取目录项和元数据
 - `stat()` / `stats.isDirectory()` 判断类型
 - 每个公开操作创建独立客户端，并在普通操作结束或流关闭后断开
-- 文件复制、下载和上传落盘使用 Node.js stream + `pipeline()`
-- 文件夹复制和删除均为递归操作；目标已存在或复制到自身子目录时必须拒绝
+- 文件下载和上传落盘使用 Node.js stream + `pipeline()`
+- 文件夹删除为递归操作
 
 不要恢复旧 `smb2` 包、私有 `smb2-forge` 请求或手工解析 `FileAttributes`，除非新方案已经通过真实 SMB 兼容性验证。
 

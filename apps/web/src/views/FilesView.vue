@@ -375,9 +375,6 @@
             <button class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('move')">
               <el-icon><Move /></el-icon><span>{{ t("files.move") }}</span>
             </button>
-            <button v-if="contextMenu.item?.type === 'file'" class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('copy')">
-              <el-icon><Copy /></el-icon><span>{{ t("files.copy") }}</span>
-            </button>
             <button v-if="contextMenu.item?.type === 'file'" class="el-dropdown-menu__item context-menu-item" type="button" role="menuitem" @click="runContextAction('share')">
               <el-icon><Share2 /></el-icon><span>{{ t("files.share") }}</span>
             </button>
@@ -398,7 +395,6 @@ import { ElCheckbox, ElMessage, ElMessageBox } from "element-plus";
 import {
   ALargeSmall,
   ArrowLeft,
-  Copy,
   Download,
   Eye,
   FolderOpen,
@@ -788,7 +784,6 @@ async function runContextAction(action) {
   if (action === "preview") return preview(item);
   if (action === "rename") return promptRename(item);
   if (action === "move") return promptMove(item);
-  if (action === "copy") return promptCopy(item);
   if (action === "share") return share(item);
   if (action === "delete") return deleteOne(item);
 }
@@ -924,18 +919,6 @@ async function promptMove(item) {
     await loadFiles();
   } catch (err) {
     if (err !== "cancel") ElMessage.error(uiError(err, "files.moveFailed"));
-  }
-}
-
-async function promptCopy(item) {
-  try {
-    const { value } = await ElMessageBox.prompt(t("files.copyPrompt"), t("files.copyTitle"), { inputValue: item.path });
-    if (!value) return;
-    await api.copyFile({ path: item.path, target: value });
-    ElMessage.success(t("files.copied"));
-    await loadFiles();
-  } catch (err) {
-    if (err !== "cancel") ElMessage.error(uiError(err, "files.copyFailed"));
   }
 }
 

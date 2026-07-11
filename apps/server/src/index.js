@@ -7,7 +7,7 @@ import { loadConfig } from "./config.js";
 import { currentSession, createSession, destroySession, requireSession } from "./session.js";
 import { basename, contentTypeFor, encodeContentDisposition, joinDrivePath, normalizeDrivePath, previewContentTypeFor } from "./path-utils.js";
 import { completeUpload, cancelUpload, createUpload, prepareUploadTemp, writeChunk } from "./uploads.js";
-import { copyPath, createFileReadStream, listDirectory, mkdir, remove, rename, statPath, verifyLogin } from "./smb.js";
+import { createFileReadStream, listDirectory, mkdir, remove, rename, statPath, verifyLogin } from "./smb.js";
 import { createShare, getShare } from "./shares.js";
 import { clearLoginFailures, loginLimitStatus, recordLoginFailure } from "./login-rate-limit.js";
 
@@ -110,16 +110,6 @@ async function renameItem(req, res, session) {
     const to = body.target ? normalizeDrivePath(body.target) : joinDrivePath(from.split("/").slice(0, -1).join("/") || "/", body.name || "");
     await rename(config, session, from, to);
     json(res, 200, { ok: true, path: to });
-  } catch (error) {
-    sendError(res, error);
-  }
-}
-
-async function copyItem(req, res, session) {
-  try {
-    const body = await readJson(req, 1024 * 32);
-    await copyPath(config, session, normalizeDrivePath(body.path || "/"), normalizeDrivePath(body.target || "/"));
-    json(res, 200, { ok: true });
   } catch (error) {
     sendError(res, error);
   }
@@ -289,7 +279,6 @@ async function route(req, res) {
   if (url.pathname === "/api/files/delete" && req.method === "POST") return deleteItems(req, res, session);
   if (url.pathname === "/api/files/rename" && req.method === "POST") return renameItem(req, res, session);
   if (url.pathname === "/api/files/move" && req.method === "POST") return moveItem(req, res, session);
-  if (url.pathname === "/api/files/copy" && req.method === "POST") return copyItem(req, res, session);
   if (url.pathname === "/api/files/download" && req.method === "GET") return sendDownload(req, res, session, normalizeDrivePath(url.searchParams.get("path") || "/"));
   if (url.pathname === "/api/files/preview" && req.method === "GET") return sendDownload(req, res, session, normalizeDrivePath(url.searchParams.get("path") || "/"), true);
   if (url.pathname === "/api/share" && req.method === "POST") return shareFile(req, res, session);

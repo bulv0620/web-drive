@@ -63,7 +63,6 @@ export const api = {
   deleteFiles: (payload) => request("/api/files/delete", { method: "POST", body: JSON.stringify(payload) }),
   renameFile: (payload) => request("/api/files/rename", { method: "POST", body: JSON.stringify(payload) }),
   moveFile: (payload) => request("/api/files/move", { method: "POST", body: JSON.stringify(payload) }),
-  copyFile: (payload) => request("/api/files/copy", { method: "POST", body: JSON.stringify(payload) }),
   createShare: (payload) => request("/api/share", { method: "POST", body: JSON.stringify(payload) }),
   initUpload: (payload) => request("/api/upload/init", { method: "POST", body: JSON.stringify(payload) }),
   uploadChunk: (uploadId, index, blob, options = {}) => request(`/api/upload/chunk?${new URLSearchParams({ uploadId, index })}`, {

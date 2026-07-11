@@ -270,13 +270,6 @@ function ensureFolder(drivePath) {
   return node;
 }
 
-function cloneNode(node) {
-  if (node.type === "file") return { ...node, body: Buffer.from(node.body), modifiedAt: new Date().toISOString() };
-  const cloned = folder(node.name);
-  for (const [name, child] of node.children) cloned.children.set(name, cloneNode(child));
-  return cloned;
-}
-
 function writeFile(drivePath, body, mime = contentTypeFor(drivePath)) {
   const { parent, name } = getParent(drivePath);
   parent.children.set(name, file(name, body, mime));
@@ -348,21 +341,6 @@ async function renameItem(req, res) {
   fromParent.modifiedAt = new Date().toISOString();
   toParent.modifiedAt = new Date().toISOString();
   json(res, 200, { ok: true, path: to });
-}
-
-async function copyItem(req, res) {
-  const body = await readJson(req, 1024 * 32);
-  const from = normalizeDrivePath(body.path || "/");
-  const to = normalizeDrivePath(body.target || "/");
-  const node = getNode(from);
-  if (!node) throw new Error("path not found");
-  const { parent, name } = getParent(to);
-  if (parent.children.has(name)) throw new Error("target already exists");
-  const cloned = cloneNode(node);
-  cloned.name = name;
-  parent.children.set(name, cloned);
-  parent.modifiedAt = new Date().toISOString();
-  json(res, 200, { ok: true });
 }
 
 async function initUpload(req, res, session) {
@@ -503,7 +481,6 @@ async function route(req, res) {
   if (url.pathname === "/api/files/delete" && req.method === "POST") return deleteItems(req, res);
   if (url.pathname === "/api/files/rename" && req.method === "POST") return renameItem(req, res);
   if (url.pathname === "/api/files/move" && req.method === "POST") return renameItem(req, res);
-  if (url.pathname === "/api/files/copy" && req.method === "POST") return copyItem(req, res);
   if (url.pathname === "/api/files/download" && req.method === "GET") return sendDownload(req, res, normalizeDrivePath(url.searchParams.get("path") || "/"));
   if (url.pathname === "/api/files/preview" && req.method === "GET") return sendDownload(req, res, normalizeDrivePath(url.searchParams.get("path") || "/"), true);
   if (url.pathname === "/api/share" && req.method === "POST") return shareFile(req, res, session);

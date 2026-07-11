@@ -43,14 +43,6 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function destroyStream(stream) {
-  if (!stream || stream.destroyed) return Promise.resolve();
-  return new Promise((resolve) => {
-    stream.once("close", resolve);
-    stream.destroy();
-  });
-}
-
 async function pathExists(client, config, drivePath) {
   try {
     await client.stat(smbPath(config, drivePath));
@@ -112,43 +104,6 @@ async function removeWithClient(client, config, drivePath) {
       }
       await delay(500);
     }
-  }
-}
-
-async function copyPathWithClient(client, config, from, to) {
-  const source = normalizeDrivePath(from);
-  const target = normalizeDrivePath(to);
-  if (source === "/" || target === "/") throw new Error("root path is not writable");
-  if (target === source || target.startsWith(`${source}/`)) throw new Error("cannot copy a folder into itself");
-  if (await pathExists(client, config, target)) throw new Error("target already exists");
-
-  const stats = await client.stat(smbPath(config, source));
-  if (!stats.isDirectory()) {
-    const parent = target.split("/").slice(0, -1).join("/") || "/";
-    const parentStats = await client.stat(smbPath(config, parent));
-    if (!parentStats.isDirectory()) throw new Error("parent folder not found");
-    await copyFileWithClient(client, config, source, target);
-    return;
-  }
-
-  await client.mkdir(smbPath(config, target));
-  const entries = await client.readdir(smbPath(config, source), { stats: true });
-  for (const entry of entries) {
-    await copyPathWithClient(client, config, normalizeDrivePath(`${source}/${entry.name}`), normalizeDrivePath(`${target}/${entry.name}`));
-  }
-}
-
-async function copyFileWithClient(client, config, source, target) {
-  let input = null;
-  let output = null;
-  try {
-    output = await client.createWriteStream(smbPath(config, target));
-    input = await client.createReadStream(smbPath(config, source));
-    await pipeline(input, output);
-  } catch (error) {
-    await Promise.all([destroyStream(input), destroyStream(output)]);
-    await client.unlink(smbPath(config, target)).catch(() => {});
-    throw error;
   }
 }
 
@@ -271,15 +226,6 @@ export async function rename(config, credentials, from, to) {
     await client.stat(smbPath(config, source));
     if (await pathExists(client, config, target)) throw new Error("target already exists");
     await client.rename(smbPath(config, source), smbPath(config, target));
-  } finally {
-    closeClient(client);
-  }
-}
-
-export async function copyPath(config, credentials, from, to) {
-  const client = createClient(config, credentials);
-  try {
-    await copyPathWithClient(client, config, from, to);
   } finally {
     closeClient(client);
   }
