@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: web-drive
     restart: unless-stopped
+    user: "${WEB_DRIVE_UID:-1000}:${WEB_DRIVE_GID:-1000}"
     env_file:
       - ../../.env
     environment:

@@ -76,6 +76,8 @@ PORT=12600
 BASE_URL=/
 NODE_OPTIONS=--openssl-legacy-provider
 TRUST_PROXY=false
+WEB_DRIVE_UID=1000
+WEB_DRIVE_GID=1000
 
 SMB_SHARE=//nas.example.com/share
 SMB_DOMAIN=WORKGROUP
@@ -125,6 +127,7 @@ AUTH_TOKEN_SECRET=
 | `AUTH_MAX_SESSIONS` | `1000` | 服务进程最多保留的有效会话数 |
 | `AUTH_MAX_SESSIONS_PER_USER` | `10` | 单用户名最多保留的有效会话数 |
 | `TRUST_PROXY` | `false` | 是否信任反向代理传入的客户端 IP；仅对受信代理开启 |
+| `WEB_DRIVE_UID` / `WEB_DRIVE_GID` | `1000` / `1000` | Docker 容器运行用户；应与 NAS 上传缓存目录的属主匹配 |
 | `LOGIN_RATE_LIMIT_*` | 10 次/5 分钟，封禁 15 分钟 | 登录失败限流参数 |
 
 生产环境可使用 `openssl rand -hex 32` 生成 `AUTH_TOKEN_SECRET`。登录会话本身仍保存在内存中，因此服务重启后用户需要重新登录。
@@ -150,7 +153,7 @@ Windows 示例：
 UPLOAD_TEMP_HOST_DIR=D:/nas/webdrive-temp
 ```
 
-更新配置后重新执行 compose 启动命令。容器以非 root 用户运行，Linux 主机上的上传目录需要允许 UID/GID `1000` 写入。服务会在文件系统支持时把缓存权限收紧到 `0700/0600`；NAS ACL 或 bind mount 不允许容器执行 `chmod` 时会跳过权限修改，但仍会通过实际写入探测确认目录可用。若 SMB 服务运行在 Docker 宿主机，可在 `SMB_SHARE` 中使用 `//host.docker.internal/share`；compose 已配置对应的宿主机映射。
+更新配置后重新执行 compose 启动命令。容器默认以非 root 用户 `1000:1000` 运行；也可通过 `WEB_DRIVE_UID` / `WEB_DRIVE_GID` 匹配 NAS 上传目录的实际属主。服务会在文件系统支持时把缓存权限收紧到 `0700/0600`；NAS ACL 或 bind mount 不允许容器执行 `chmod` 时会跳过权限修改，但仍会通过实际写入探测确认目录可用。若 SMB 服务运行在 Docker 宿主机，可在 `SMB_SHARE` 中使用 `//host.docker.internal/share`；compose 已配置对应的宿主机映射。
 
 常用运维命令：
 
