@@ -660,6 +660,16 @@ select {
   color: #c7332b;
 }
 
+.file-icon.document {
+  background: rgba(37, 99, 235, 0.11);
+  color: #2563a9;
+}
+
+.file-icon.presentation {
+  background: rgba(234, 88, 12, 0.11);
+  color: #b9470b;
+}
+
 .file-icon.spreadsheet {
   background: rgba(16, 185, 129, 0.12);
   color: #047857;

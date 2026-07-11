@@ -2,6 +2,7 @@ import { markRaw } from "vue";
 import {
   FileArchive,
   FileAudio,
+  FileChartColumn,
   FileCode,
   FileText,
   FileImage,
@@ -112,6 +113,27 @@ const CODE_LANGUAGE_BY_FILENAME = {
 };
 
 const TEXT_EXTENSIONS = new Set(["asc", "conf", "csv", "list", "log", "nfo", "rtf", "text", "tsv", "txt"]);
+const DOCUMENT_EXTENSIONS = new Set(["doc", "docm", "docx", "dot", "dotm", "dotx", "odt", "pages"]);
+const PRESENTATION_EXTENSIONS = new Set(["key", "keynote", "odp", "pot", "potm", "potx", "pps", "ppsm", "ppsx", "ppt", "pptm", "pptx"]);
+
+const DOCUMENT_MIME_TYPES = new Set([
+  "application/msword",
+  "application/rtf",
+  "application/vnd.apple.pages",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+  "text/rtf"
+]);
+
+const PRESENTATION_MIME_TYPES = new Set([
+  "application/vnd.apple.keynote",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.oasis.opendocument.presentation",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+  "application/vnd.openxmlformats-officedocument.presentationml.template"
+]);
 
 function fileNameParts(item = {}) {
   const name = String(item.name || item.fileName || "").toLowerCase();
@@ -148,6 +170,8 @@ export function fileKind(item = {}) {
   if (mime.startsWith("audio/") || ["mp3", "wav", "flac", "aac", "ogg", "m4a", "opus"].includes(ext)) return "audio";
   if (["zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz"].includes(ext)) return "archive";
   if (mime === "application/pdf" || ext === "pdf") return "pdf";
+  if (DOCUMENT_EXTENSIONS.has(ext) || DOCUMENT_MIME_TYPES.has(mime) || mime.startsWith("application/vnd.ms-word.")) return "document";
+  if (PRESENTATION_EXTENSIONS.has(ext) || PRESENTATION_MIME_TYPES.has(mime) || mime.startsWith("application/vnd.ms-powerpoint.")) return "presentation";
   if (["xls", "xlsx", "csv", "ods", "numbers"].includes(ext)) return "spreadsheet";
   if (name.toLowerCase().endsWith(".md") || mime.startsWith("text/markdown") || codeLanguageFor(item)) return "code";
   if (isPlainTextFile(item)) return "text";
@@ -161,6 +185,8 @@ export const fileIcons = {
   audio: markRaw(FileAudio),
   archive: markRaw(FileArchive),
   pdf: markRaw(FileType),
+  document: markRaw(FileText),
+  presentation: markRaw(FileChartColumn),
   spreadsheet: markRaw(FileSpreadsheet),
   code: markRaw(FileCode),
   text: markRaw(FileText),
