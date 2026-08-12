@@ -116,11 +116,14 @@ const messages = {
     "upload.pauseAll": "Pause all",
     "upload.resumeAll": "Resume all",
     "upload.retryFailed": "Retry failed",
+    "upload.speed": "{speed}/s",
+    "upload.speedPending": "--/s",
     "upload.eta": "Remaining {time}",
     "upload.etaDone": "Done",
     "upload.etaPausing": "Pausing",
     "upload.etaPaused": "Paused",
     "upload.etaPending": "Estimating time",
+    "upload.finalizing": "Processing",
     "upload.fileMissing": "Original file is unavailable"
   },
   "zh-CN": {
@@ -233,11 +236,14 @@ const messages = {
     "upload.pauseAll": "全部暂停",
     "upload.resumeAll": "全部恢复",
     "upload.retryFailed": "重试失败项",
+    "upload.speed": "{speed}/秒",
+    "upload.speedPending": "--/秒",
     "upload.eta": "剩余 {time}",
     "upload.etaDone": "已完成",
     "upload.etaPausing": "暂停中",
     "upload.etaPaused": "已暂停",
     "upload.etaPending": "估算中",
+    "upload.finalizing": "处理中",
     "upload.fileMissing": "原始文件不可用"
   }
 };

@@ -53,6 +53,53 @@ async function request(path, options = {}) {
   return data;
 }
 
+function uploadRequest(path, blob, options = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      options.signal?.removeEventListener("abort", abort);
+      callback(value);
+    };
+    const abort = () => xhr.abort();
+
+    xhr.open("PUT", path);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("content-type", "application/octet-stream");
+    xhr.upload.onprogress = (event) => options.onProgress?.(event.loaded, event.total || blob.size);
+    xhr.onload = () => {
+      let data = {};
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        data = { error: xhr.responseText || "request failed" };
+      }
+      if (xhr.status === 401) {
+        const error = new Error(data.error || "authentication required");
+        error.status = 401;
+        unauthorizedHandler?.(error);
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const error = new Error(data.error || "request failed");
+        error.status = xhr.status;
+        finish(reject, error);
+        return;
+      }
+      finish(resolve, data);
+    };
+    xhr.onerror = () => finish(reject, new TypeError("network request failed"));
+    xhr.onabort = () => finish(reject, new DOMException("The operation was aborted", "AbortError"));
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) {
+      finish(reject, new DOMException("The operation was aborted", "AbortError"));
+      return;
+    }
+    xhr.send(blob);
+  });
+}
+
 export function isRetryableUploadError(error) {
   if (error?.name === "AbortError") return false;
   if (!Number.isFinite(error?.status)) return true;
@@ -71,13 +118,7 @@ export const api = {
   moveFile: (payload) => request("/api/files/move", { method: "POST", body: JSON.stringify(payload) }),
   createShare: (payload) => request("/api/share", { method: "POST", body: JSON.stringify(payload) }),
   initUpload: (payload) => request("/api/upload/init", { method: "POST", body: JSON.stringify(payload) }),
-  uploadChunk: (uploadId, index, blob, options = {}) => request(`/api/upload/chunk?${new URLSearchParams({ uploadId, index })}`, {
-    method: "PUT",
-    body: blob,
-    raw: true,
-    headers: { "content-type": "application/octet-stream" },
-    signal: options.signal
-  }),
+  uploadChunk: (uploadId, index, blob, options = {}) => uploadRequest(`/api/upload/chunk?${new URLSearchParams({ uploadId, index })}`, blob, options),
   completeUpload: (payload) => request("/api/upload/complete", { method: "POST", body: JSON.stringify(payload) }),
   cancelUpload: (payload) => request("/api/upload/cancel", { method: "POST", body: JSON.stringify(payload) })
 };

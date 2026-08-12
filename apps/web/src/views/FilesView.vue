@@ -244,6 +244,7 @@
 
                   <div class="upload-task-meta">
                     <span>{{ formatSize(task.loadedBytes) }} / {{ formatSize(task.size) }}</span>
+                    <span class="upload-task-speed">{{ uploadSpeedText(task) }}</span>
                     <span>{{ uploadEtaText(task) }}</span>
                   </div>
 
@@ -1035,6 +1036,10 @@ function createUploadTask(item) {
     progress: 0,
     speedBps: 0,
     etaSeconds: null,
+    finalizing: false,
+    inFlightBytes: {},
+    networkTransferredBytes: 0,
+    metricSamples: [],
     uploadedChunks: [],
     totalChunks: 0,
     uploadId: "",
@@ -1044,9 +1049,7 @@ function createUploadTask(item) {
     abortController: null,
     cancelRequested: false,
     enqueued: false,
-    running: false,
-    lastMetricAt: 0,
-    lastLoadedBytes: 0
+    running: false
   });
 }
 
@@ -1154,8 +1157,7 @@ async function uploadOne(file, task) {
   task.cancelRequested = false;
   task.running = true;
   task.abortController = new AbortController();
-  task.lastMetricAt = performance.now();
-  task.lastLoadedBytes = task.loadedBytes || 0;
+  resetUploadMetrics(task);
 
   try {
     if (!task.uploadId) {
@@ -1178,6 +1180,9 @@ async function uploadOne(file, task) {
       return;
     }
 
+    task.finalizing = true;
+    task.speedBps = 0;
+    task.etaSeconds = null;
     await api.completeUpload({ uploadId: task.uploadId });
     task.loadedBytes = task.size;
     task.progress = 100;
@@ -1196,6 +1201,8 @@ async function uploadOne(file, task) {
     task.errorMessage = uiError(err, "files.uploadFailed");
     ElMessage.error(task.errorMessage);
   } finally {
+    task.finalizing = false;
+    task.inFlightBytes = {};
     task.abortController = null;
     task.running = false;
   }
@@ -1291,11 +1298,17 @@ async function uploadChunkWithRetry(task, index, blob) {
     await acquireUploadChunkSlot(task.abortController.signal);
     try {
       if (task.status === "paused" || task.status === "pausing") throw abortError();
-      return await api.uploadChunk(task.uploadId, index, blob, { signal: task.abortController.signal });
+      task.inFlightBytes[index] = 0;
+      return await api.uploadChunk(task.uploadId, index, blob, {
+        signal: task.abortController.signal,
+        onProgress: (loaded) => recordUploadProgress(task, index, loaded)
+      });
     } catch (error) {
       lastError = error;
       if (attempt >= uploadChunkMaxAttempts || !isRetryableUploadError(error)) throw error;
     } finally {
+      delete task.inFlightBytes[index];
+      updateDisplayedUploadBytes(task);
       releaseUploadChunkSlot();
     }
     await abortableDelay(uploadChunkRetryBaseDelayMs * 2 ** (attempt - 1), task.abortController.signal);
@@ -1333,23 +1346,49 @@ function uploadChunkBytes(task, index) {
   return Math.max(0, Math.min(task.size, start + chunkSize.value) - start);
 }
 
-function updateUploadMetrics(task, loadedBytes) {
-  const now = performance.now();
-  const previousLoaded = task.lastLoadedBytes || 0;
-  const previousAt = task.lastMetricAt || now;
-  const seconds = Math.max((now - previousAt) / 1000, 0.001);
-  const delta = Math.max(0, loadedBytes - previousLoaded);
+function resetUploadMetrics(task) {
+  task.speedBps = 0;
+  task.etaSeconds = null;
+  task.inFlightBytes = {};
+  task.networkTransferredBytes = 0;
+  task.metricSamples = [];
+}
 
+function recordUploadProgress(task, index, loadedBytes) {
+  const previous = Number(task.inFlightBytes[index] || 0);
+  const current = Math.max(previous, Math.min(uploadChunkBytes(task, index), Number(loadedBytes) || 0));
+  task.inFlightBytes[index] = current;
+  task.networkTransferredBytes += current - previous;
+  updateDisplayedUploadBytes(task);
+
+  const now = performance.now();
+  const samples = task.metricSamples || [];
+  const latest = samples[samples.length - 1];
+  if (!latest || now - latest.at >= 250) {
+    samples.push({ at: now, networkBytes: task.networkTransferredBytes, uploadedBytes: task.loadedBytes });
+  }
+  const cutoff = now - 8000;
+  while (samples.length > 2 && samples[1].at < cutoff) samples.shift();
+  task.metricSamples = samples;
+  const first = samples[0];
+  const elapsed = (now - first.at) / 1000;
+  if (elapsed >= 0.75) {
+    task.speedBps = Math.max(0, (task.networkTransferredBytes - first.networkBytes) / elapsed);
+    const effectiveSpeed = Math.max(0, (task.loadedBytes - first.uploadedBytes) / elapsed);
+    task.etaSeconds = effectiveSpeed > 0 ? Math.max(0, (task.size - task.loadedBytes) / effectiveSpeed) : null;
+  }
+}
+
+function updateDisplayedUploadBytes(task) {
+  const completedBytes = uploadedBytesFromChunks(task, new Set(task.uploadedChunks || []));
+  const activeBytes = Object.values(task.inFlightBytes || {}).reduce((sum, bytes) => sum + Number(bytes || 0), 0);
+  task.loadedBytes = Math.min(task.size, completedBytes + activeBytes);
+  updateUploadProgress(task);
+}
+
+function updateUploadMetrics(task, loadedBytes) {
   task.loadedBytes = loadedBytes;
   updateUploadProgress(task);
-
-  if (delta > 0) {
-    const instantSpeed = delta / seconds;
-    task.speedBps = task.speedBps ? task.speedBps * 0.65 + instantSpeed * 0.35 : instantSpeed;
-    task.etaSeconds = task.speedBps > 0 ? Math.max(0, (task.size - task.loadedBytes) / task.speedBps) : null;
-    task.lastLoadedBytes = loadedBytes;
-    task.lastMetricAt = now;
-  }
 }
 
 function updateUploadProgress(task) {
@@ -1369,6 +1408,7 @@ function pauseUploadTask(task) {
     task.status = "pausing";
   }
   task.etaSeconds = null;
+  task.speedBps = 0;
   runUploadQueue();
 }
 
@@ -1404,8 +1444,6 @@ function retryUploadTask(task) {
   task.status = "pending";
   task.errorMessage = "";
   task.cancelRequested = false;
-  task.lastMetricAt = 0;
-  task.lastLoadedBytes = task.loadedBytes || 0;
   enqueueUploadTask(task);
   runUploadQueue();
 }
@@ -1492,8 +1530,14 @@ function uploadEtaText(task) {
   if (task.status === "pausing") return t("upload.etaPausing");
   if (task.status === "paused") return t("upload.etaPaused");
   if (task.status === "canceled" || task.status === "error") return "-";
+  if (task.finalizing) return t("upload.finalizing");
   if (Number.isFinite(task.etaSeconds)) return t("upload.eta", { time: formatDuration(task.etaSeconds) });
   return t("upload.etaPending");
+}
+
+function uploadSpeedText(task) {
+  if (task.status !== "uploading" || task.finalizing || !(task.speedBps > 0)) return t("upload.speedPending");
+  return t("upload.speed", { speed: formatSize(task.speedBps) });
 }
 
 function formatDuration(seconds) {
