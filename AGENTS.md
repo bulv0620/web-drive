@@ -33,7 +33,8 @@ WebDrive 是一个基于 SMB 共享的 Web 网盘。服务端不维护独立文�
 - `apps/server`：HTTP API、会话、分享、上传和 SMB 适配
 - `apps/mock`：内存文件系统 Mock，默认端口 `12601`
 - `packages/shared`：env 加载、HTTP 工具和静态资源托管
-- `deploy/docker/compose.yml`：Docker Compose 配置
+- `compose.yml`：Docker Compose 配置
+- `docs/README.md`：产品、架构、工程 Spec 与运维文档索引
 - `.env.example`：部署配置模板
 - `README.md`：面向使用者的运行和部署文档
 
@@ -57,7 +58,7 @@ Vite 默认把 `/api` 和 `/share` 代理到 `http://127.0.0.1:12601`。连接�
 Docker：
 
 ```bash
-docker compose --env-file .env -f deploy/docker/compose.yml up -d --build
+docker compose up -d --build
 ```
 
 仓库包含服务端安全回归测试。提交前至少执行：
@@ -71,7 +72,7 @@ npm run build:web
 
 ## 配置约定
 
-- `PORT`：HTTP 端口，默认 `12600`
+- `PORT`：HTTP 端口，默认 `10101`
 - `SMB_SHARE`：SMB 共享地址，例如 `//192.168.1.10/Public`
 - `SMB_DOMAIN`：SMB 域或工作组，可为空
 - `SMB_ROOT`：WebDrive 暴露的共享内根路径
@@ -80,6 +81,7 @@ npm run build:web
 - `UPLOAD_MAX_BODY_BYTES`：单次上传请求上限，不能小于分片大小
 - `UPLOAD_MAX_FILE_BYTES`、`UPLOAD_MAX_TEMP_BYTES`：单文件和临时目录容量上限
 - `UPLOAD_MAX_TASKS_PER_SESSION`、`UPLOAD_TASK_TTL_SECONDS`：上传任务数量和保留期限
+- `HTTP_REQUEST_TIMEOUT_MS`：HTTP 请求超时，默认 30 分钟；需要覆盖低带宽下单个分片的最长传输时间
 - `AUTH_TOKEN_TTL_SECONDS`：登录会话有效期
 - `AUTH_TOKEN_SECRET`：登录 Cookie 的 HMAC 签名密钥，生产环境必须提供长随机值
 - `AUTH_COOKIE_SECURE`、`AUTH_MAX_SESSIONS*`：Cookie 与会话安全限制
@@ -126,9 +128,9 @@ SMB 适配集中在 `apps/server/src/smb.js`。当前使用 `@marsaud/smb2` 的 
 后端流程位于 `apps/server/src/uploads.js`：
 
 1. `POST /api/upload/init` 创建或恢复任务
-2. `PUT /api/upload/chunk` 写入 `${index}.part`
+2. `PUT /api/upload/chunk` 流式写入随机 `.uploading` 临时文件，大小校验通过后原子改名为 `${index}.part`
 3. `POST /api/upload/complete` 按顺序合并并校验总大小
-4. 通过 SMB write stream 写入目标路径
+4. 按顺序读取分片并通过单个 SMB write stream 写入目标路径，不生成整文件本地副本
 5. 成功或取消后清理临时目录
 
 上传 ID 由当前会话、目录、文件名、文件大小和分片大小确定。任务 Map 在内存中，同一会话重新 init 相同元数据会重新登记任务并发现持久化的已有分片；服务重启后旧会话失效，遗留分片按 `UPLOAD_TASK_TTL_SECONDS` 清理。因此 `UPLOAD_TEMP_DIR` 的 Docker volume 不能随意移除。

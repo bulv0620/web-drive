@@ -48,7 +48,7 @@ npm run build:web
 npm run server
 ```
 
-启动后访问 [http://localhost:12600](http://localhost:12600)，健康检查地址为 [http://localhost:12600/healthz](http://localhost:12600/healthz)。
+启动后访问 [http://localhost:10101](http://localhost:10101)，健康检查地址为 [http://localhost:10101/healthz](http://localhost:10101/healthz)。
 
 ### 使用 Mock 开发
 
@@ -72,7 +72,7 @@ npm run dev:web
 
 ```env
 HOST=127.0.0.1
-PORT=12600
+PORT=10101
 BASE_URL=/
 NODE_OPTIONS=--openssl-legacy-provider
 TRUST_PROXY=false
@@ -90,6 +90,7 @@ UPLOAD_MAX_FILE_BYTES=107374182400
 UPLOAD_MAX_TEMP_BYTES=214748364800
 UPLOAD_MAX_TASKS_PER_SESSION=20
 UPLOAD_TASK_TTL_SECONDS=604800
+HTTP_REQUEST_TIMEOUT_MS=1800000
 
 SHARE_TOKEN_TTL_SECONDS=86400
 SHARE_TOKEN_MAX_TTL_SECONDS=604800
@@ -106,7 +107,7 @@ AUTH_TOKEN_SECRET=
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | HTTP 服务监听地址；仅在容器或受控网络内改为 `0.0.0.0` |
-| `PORT` | `12600` | HTTP 服务端口 |
+| `PORT` | `10101` | HTTP 服务端口 |
 | `BASE_URL` | `/` | 前端公开的基础路径配置；当前建议保持 `/` |
 | `SMB_SHARE` | 无 | 必填，共享地址可写成 `//host/share` 或 `\\host\share` |
 | `SMB_DOMAIN` | 空 | SMB 域或工作组；无域环境可留空 |
@@ -118,6 +119,7 @@ AUTH_TOKEN_SECRET=
 | `UPLOAD_MAX_TEMP_BYTES` | `214748364800` | 整个上传临时目录允许的最大占用，默认 200 GiB |
 | `UPLOAD_MAX_TASKS_PER_SESSION` | `20` | 单会话最多活跃上传任务数 |
 | `UPLOAD_TASK_TTL_SECONDS` | `604800` | 临时上传目录保留时间，超时后启动时清理 |
+| `HTTP_REQUEST_TIMEOUT_MS` | `1800000` | HTTP 请求超时，单位毫秒；低带宽上传建议保留足够余量 |
 | `SHARE_TOKEN_TTL_SECONDS` | `86400` | 分享链接有效期，单位为秒 |
 | `SHARE_TOKEN_MAX_TTL_SECONDS` | `604800` | 客户端可请求的分享链接最长有效期 |
 | `SHARE_MAX_ACTIVE_PER_USER` | `100` | 单用户最多有效分享链接数 |
@@ -136,7 +138,7 @@ AUTH_TOKEN_SECRET=
 
 ```bash
 cp .env.example .env
-docker compose --env-file .env -f deploy/docker/compose.yml up -d --build
+docker compose up -d --build
 ```
 
 Compose 默认仅将端口发布到 `127.0.0.1`，并默认启用安全 Cookie，需由同机 HTTPS 反向代理对外提供服务。若只进行回环地址上的临时 HTTP 测试，可在 `.env` 中设置 `AUTH_COOKIE_SECURE=false`；不要在对外环境中关闭。确需修改绑定地址时使用 `PUBLISH_HOST`。
@@ -160,12 +162,14 @@ UPLOAD_TEMP_HOST_DIR=D:/nas/webdrive-temp
 ```bash
 npm run docker:up
 npm run docker:down
-docker compose --env-file .env -f deploy/docker/compose.yml logs -f web-drive
+docker compose logs -f web-drive
 ```
 
 ## 上传与预览说明
 
-- 浏览器会同时处理最多 3 个上传任务，每个任务最多并发上传 3 个分片。
+- 浏览器会同时处理最多 3 个上传任务，并在所有任务之间共享最多 3 个在途分片请求。
+- 瞬时网络错误、HTTP 408/425/429 和服务端 5xx 错误会对单个分片进行递增退避重试，最多尝试 3 次。
+- 服务端边接收边写入分片临时文件，完整校验后才登记为可恢复分片；完成时按顺序直接串流到 SMB，不生成整文件本地副本。
 - 暂停会等待正在发送的分片结束，再保留已完成分片；取消会同时清理服务端临时数据。
 - 上传 ID 绑定当前登录会话、目标路径、文件名、大小和分片大小；不同登录会话不能读取、完成或取消彼此的任务。
 - 上传任务和浏览器中的原始 `File` 对象不持久化；刷新页面后需要重新选择原文件才能继续。
@@ -185,7 +189,7 @@ docker compose --env-file .env -f deploy/docker/compose.yml logs -f web-drive
 - SMB 权限是最终权限边界；WebDrive 不会绕过 NAS 的访问控制。
 - SMB 客户端仍需要 legacy OpenSSL provider，仓库的服务端脚本和示例环境变量已包含相应配置。
 - 当前 SMB 客户端不提供 SMB3 加密能力，因此 WebDrive 到 NAS 的网络必须可信或由 VPN/隔离网络保护；替换客户端前需进行真实 NAS 兼容验证。
-- 完整整改记录和后续任务见 `docs/安全优化任务.md`。
+- 产品、架构、工程 Spec 与生产检查表统一收录在 [docs](docs/README.md)。
 
 ## 项目结构
 
@@ -194,6 +198,6 @@ apps/web                 Vue 前端
 apps/server              HTTP API、会话、上传与 SMB 适配
 apps/mock                无 SMB 依赖的开发 Mock 服务
 packages/shared          环境变量、HTTP 和静态资源公共工具
-deploy/docker/compose.yml
-docs/WebDrive需求文档.md
+compose.yml              Docker Compose 配置
+docs                     产品、架构、Spec 与运维文档
 ```
