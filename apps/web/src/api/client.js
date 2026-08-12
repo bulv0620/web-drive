@@ -53,6 +53,12 @@ async function request(path, options = {}) {
   return data;
 }
 
+export function isRetryableUploadError(error) {
+  if (error?.name === "AbortError") return false;
+  if (!Number.isFinite(error?.status)) return true;
+  return [408, 425, 429].includes(error.status) || error.status >= 500;
+}
+
 export const api = {
   app: () => request("/api/app"),
   me: checkSession,

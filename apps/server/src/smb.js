@@ -252,11 +252,15 @@ export async function createFileReadStream(config, credentials, drivePath, optio
 }
 
 export async function writeLocalFile(config, credentials, localPath, drivePath) {
+  return writeStreamToSmbFile(config, credentials, fs.createReadStream(localPath), drivePath);
+}
+
+export async function writeStreamToSmbFile(config, credentials, input, drivePath) {
   const client = createClient(config, credentials);
   try {
     const parent = normalizeDrivePath(drivePath).split("/").slice(0, -1).join("/") || "/";
     await ensureDirectory(client, config, parent);
-    await pipeToSmbFile(client, smbPath(config, drivePath), fs.createReadStream(localPath));
+    await pipeToSmbFile(client, smbPath(config, drivePath), input);
   } finally {
     closeClient(client);
   }

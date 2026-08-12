@@ -1,14 +1,15 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { readBody } from "@web-drive/shared/http-utils";
 import { joinDrivePath, normalizeDrivePath } from "./path-utils.js";
-import { writeLocalFile } from "./smb.js";
+import { writeStreamToSmbFile } from "./smb.js";
 
 const tasks = new Map();
 const uploadIdPattern = /^[a-f0-9]{64}$/;
 let tempMutationQueue = Promise.resolve();
+let tempUsageBytes = 0;
 const unsupportedChmodErrors = new Set(["EACCES", "EPERM", "ENOTSUP", "EROFS"]);
 
 function withTempMutationLock(operation) {
@@ -91,14 +92,37 @@ async function existingChunks(config, uploadId) {
   }
 }
 
-export async function assembleChunks(directory, totalChunks, assembledPath) {
-  async function* chunks() {
-    for (let index = 0; index < totalChunks; index += 1) {
-      yield* fs.createReadStream(path.join(directory, `${index}.part`));
-    }
+async function existingChunkBytes(config, uploadId) {
+  let total = 0;
+  for (const index of await existingChunks(config, uploadId)) {
+    total += await fs.promises.stat(path.join(taskDir(config, uploadId), `${index}.part`)).then((stat) => stat.size).catch(() => 0);
   }
+  return total;
+}
 
-  await pipeline(chunks(), fs.createWriteStream(assembledPath, { mode: 0o600 }));
+async function validateChunks(config, task) {
+  const uploadedChunks = await existingChunks(config, task.uploadId);
+  if (uploadedChunks.length !== task.totalChunks || !uploadedChunks.every((value, index) => value === index)) {
+    throw new Error("upload is missing chunks");
+  }
+  let totalSize = 0;
+  for (let index = 0; index < task.totalChunks; index += 1) {
+    const actualSize = await fs.promises.stat(path.join(taskDir(config, task.uploadId), `${index}.part`)).then((stat) => stat.size);
+    const expectedSize = task.size === 0 ? 0 : Math.min(task.chunkSize, task.size - index * task.chunkSize);
+    if (actualSize !== expectedSize) throw new Error("chunk size does not match upload metadata");
+    totalSize += actualSize;
+  }
+  if (totalSize !== task.size) throw new Error("merged file size mismatch");
+}
+
+export async function* readChunks(directory, totalChunks) {
+  for (let index = 0; index < totalChunks; index += 1) {
+    yield* fs.createReadStream(path.join(directory, `${index}.part`));
+  }
+}
+
+export async function assembleChunks(directory, totalChunks, assembledPath) {
+  await pipeline(readChunks(directory, totalChunks), fs.createWriteStream(assembledPath, { mode: 0o600 }));
 }
 
 export async function createUpload(config, session, payload) {
@@ -126,12 +150,15 @@ export async function createUpload(config, session, payload) {
     size: totalSize,
     chunkSize,
     totalChunks,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    storedBytes: 0,
+    writingChunks: new Set()
   };
   await fs.promises.mkdir(taskDir(config, uploadId), { recursive: true, mode: 0o700 });
   await chmodIfSupported(taskDir(config, uploadId), 0o700);
   tasks.set(uploadId, task);
   const uploadedChunks = await existingChunks(config, uploadId);
+  task.storedBytes = await existingChunkBytes(config, uploadId);
   return {
     uploadId,
     directory,
@@ -152,23 +179,57 @@ export async function writeChunk(config, session, req, uploadId, index) {
   if (task.ownerId !== sessionOwner(session)) throw new Error("upload task belongs to another session");
   const chunkIndex = Number(index);
   if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= task.totalChunks) throw new Error("invalid chunk index");
-  const body = await readBody(req, config.uploadMaxBodyBytes);
   const expectedSize = task.size === 0 ? 0 : Math.min(task.chunkSize, task.size - chunkIndex * task.chunkSize);
-  if (body.length !== expectedSize) throw new Error("chunk size does not match upload metadata");
-  return withTempMutationLock(async () => {
+  const contentLength = Number(req.headers?.["content-length"]);
+  if (Number.isFinite(contentLength) && contentLength !== expectedSize) throw new Error("chunk size does not match upload metadata");
+  const filePath = path.join(taskDir(config, safeId), `${chunkIndex}.part`);
+  const temporaryPath = path.join(taskDir(config, safeId), `${chunkIndex}.${crypto.randomBytes(8).toString("hex")}.uploading`);
+  let existingSize = 0;
+  await withTempMutationLock(async () => {
     if (tasks.get(safeId) !== task || task.completing) throw new Error("upload task is no longer writable");
-    const filePath = path.join(taskDir(config, safeId), `${chunkIndex}.part`);
-    const existingSize = await fs.promises.stat(filePath).then((stat) => stat.size).catch((error) => {
+    if (task.writingChunks.has(chunkIndex)) throw new Error("chunk is already being uploaded");
+    existingSize = await fs.promises.stat(filePath).then((stat) => stat.size).catch((error) => {
       if (error.code === "ENOENT") return 0;
       throw error;
     });
-    const tempBytes = await directorySize(config.uploadTempDir);
-    if (tempBytes - existingSize + body.length > config.uploadMaxTempBytes) throw new Error("upload temporary storage quota exceeded");
-    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.promises.writeFile(filePath, body, { mode: 0o600 });
-    await chmodIfSupported(filePath, 0o600);
-    return { uploadId: safeId, index: chunkIndex, size: body.length };
+    if (tempUsageBytes + expectedSize > config.uploadMaxTempBytes) throw new Error("upload temporary storage quota exceeded");
+    tempUsageBytes += expectedSize;
+    task.writingChunks.add(chunkIndex);
   });
+
+  let receivedSize = 0;
+  const counter = new Transform({
+    transform(chunk, encoding, callback) {
+      receivedSize += chunk.length;
+      if (receivedSize > expectedSize || receivedSize > config.uploadMaxBodyBytes) {
+        callback(new Error("chunk size does not match upload metadata"));
+        return;
+      }
+      callback(null, chunk);
+    }
+  });
+
+  try {
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await pipeline(req, counter, fs.createWriteStream(temporaryPath, { flags: "wx", mode: 0o600 }));
+    if (receivedSize !== expectedSize) throw new Error("chunk size does not match upload metadata");
+    await chmodIfSupported(temporaryPath, 0o600);
+    await withTempMutationLock(async () => {
+      if (tasks.get(safeId) !== task || task.completing) throw new Error("upload task is no longer writable");
+      await fs.promises.rename(temporaryPath, filePath);
+      tempUsageBytes -= existingSize;
+      task.storedBytes += expectedSize - existingSize;
+      task.writingChunks.delete(chunkIndex);
+    });
+    await chmodIfSupported(filePath, 0o600);
+    return { uploadId: safeId, index: chunkIndex, size: receivedSize };
+  } catch (error) {
+    await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
+    await withTempMutationLock(async () => {
+      if (task.writingChunks.delete(chunkIndex)) tempUsageBytes -= expectedSize;
+    });
+    throw error;
+  }
 }
 
 export async function completeUpload(config, session, uploadId) {
@@ -181,21 +242,23 @@ export async function completeUpload(config, session, uploadId) {
   await withTempMutationLock(async () => {
     if (tasks.get(safeId) !== task) throw new Error("upload task not found");
     task.completing = true;
-    const uploadedChunks = await existingChunks(config, safeId);
-    if (uploadedChunks.length !== task.totalChunks || !uploadedChunks.every((value, index) => value === index)) {
-      task.completing = false;
-      throw new Error("upload is missing chunks");
-    }
   });
-
-  const assembled = path.join(dir, "assembled.bin");
   try {
-    await assembleChunks(dir, task.totalChunks, assembled);
-    const stat = await fs.promises.stat(assembled);
-    if (stat.size !== task.size) throw new Error("merged file size mismatch");
-    await writeLocalFile(config, session, assembled, task.targetPath);
+    await validateChunks(config, task);
+  } catch (error) {
+    await withTempMutationLock(async () => {
+      task.completing = false;
+    });
+    throw error;
+  }
+
+  try {
+    await writeStreamToSmbFile(config, session, readChunks(dir, task.totalChunks), task.targetPath);
     await fs.promises.rm(dir, { recursive: true, force: true });
-    tasks.delete(safeId);
+    await withTempMutationLock(async () => {
+      tempUsageBytes -= task.storedBytes;
+      tasks.delete(safeId);
+    });
     return { path: task.targetPath, name: task.name, size: task.size };
   } catch (error) {
     task.completing = false;
@@ -213,6 +276,7 @@ export async function cancelUpload(config, session, uploadId) {
     if (tasks.get(safeId) !== task) throw new Error("upload task not found");
     tasks.delete(safeId);
     await fs.promises.rm(taskDir(config, safeId), { recursive: true, force: true });
+    tempUsageBytes -= task.storedBytes;
   });
 }
 
@@ -235,7 +299,13 @@ export async function prepareUploadTemp(config) {
     for (const name of await fs.promises.readdir(directory)) {
       const filePath = path.join(directory, name);
       const fileStat = await fs.promises.lstat(filePath);
-      if (fileStat.isFile()) await chmodIfSupported(filePath, 0o600);
+      if (!fileStat.isFile()) continue;
+      if (name === "assembled.bin" || name.endsWith(".uploading")) {
+        await fs.promises.rm(filePath, { force: true });
+        continue;
+      }
+      await chmodIfSupported(filePath, 0o600);
     }
   }
+  tempUsageBytes = await directorySize(root);
 }

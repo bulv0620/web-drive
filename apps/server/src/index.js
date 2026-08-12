@@ -295,7 +295,7 @@ const server = http.createServer((req, res) => {
   route(req, res).catch((error) => sendError(res, error, 500));
 });
 
-server.requestTimeout = 120_000;
+server.requestTimeout = config.httpRequestTimeoutMs;
 server.headersTimeout = 30_000;
 server.keepAliveTimeout = 5_000;
 server.maxRequestsPerSocket = 100;

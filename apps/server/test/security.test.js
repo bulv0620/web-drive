@@ -3,7 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import test from "node:test";
 import { applySecurityHeaders, isCrossOriginMutation } from "@web-drive/shared/http-utils";
 import { serveStaticWeb } from "@web-drive/shared/static-web";
@@ -11,7 +11,7 @@ import { previewContentTypeFor } from "../src/path-utils.js";
 import { createSession } from "../src/session.js";
 import { createShare } from "../src/shares.js";
 import { pipeToSmbFile } from "../src/smb.js";
-import { assembleChunks, cancelUpload, createUpload, prepareUploadTemp } from "../src/uploads.js";
+import { assembleChunks, cancelUpload, createUpload, prepareUploadTemp, writeChunk } from "../src/uploads.js";
 
 function uploadConfig(uploadTempDir) {
   return {
@@ -91,6 +91,44 @@ test("chunk assembly preserves order and private permissions without accumulatin
   }
 });
 
+test("upload chunks stream to an atomic part and reject incomplete bodies", async () => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "webdrive-stream-upload-"));
+  const config = uploadConfig(root);
+  const session = { id: "stream-session", username: "alice" };
+  try {
+    await prepareUploadTemp(config);
+    const task = await createUpload(config, session, { name: "stream.bin", size: 8, chunkSize: 8 });
+    const goodRequest = Readable.from([Buffer.from("1234"), Buffer.from("5678")]);
+    goodRequest.headers = { "content-length": "8" };
+    const result = await writeChunk(config, session, goodRequest, task.uploadId, 0);
+    assert.equal(result.size, 8);
+    assert.equal(await fs.promises.readFile(path.join(root, task.uploadId, "0.part"), "utf8"), "12345678");
+
+    const retryTask = await createUpload(config, session, { name: "retry.bin", size: 8, chunkSize: 8 });
+    const shortRequest = Readable.from([Buffer.from("short")]);
+    shortRequest.headers = {};
+    await assert.rejects(writeChunk(config, session, shortRequest, retryTask.uploadId, 0), /chunk size/);
+    assert.deepEqual(await fs.promises.readdir(path.join(root, retryTask.uploadId)), []);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("startup removes interrupted upload artifacts before counting temporary usage", async () => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "webdrive-upload-recovery-"));
+  const taskDirectory = path.join(root, "a".repeat(64));
+  try {
+    await fs.promises.mkdir(taskDirectory, { recursive: true });
+    await fs.promises.writeFile(path.join(taskDirectory, "0.part"), "valid");
+    await fs.promises.writeFile(path.join(taskDirectory, "0.deadbeef.uploading"), "partial");
+    await fs.promises.writeFile(path.join(taskDirectory, "assembled.bin"), "stale");
+    await prepareUploadTemp(uploadConfig(root));
+    assert.deepEqual(await fs.promises.readdir(taskDirectory), ["0.part"]);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("SMB upload closes the remote file handle exactly once", async () => {
   const calls = { close: 0, options: null, content: "" };
   const file = { FileId: Buffer.alloc(16) };
@@ -143,7 +181,7 @@ test("browser cross-origin mutations are rejected", () => {
   assert.equal(isCrossOriginMutation({
     method: "POST",
     headers: {
-      host: "127.0.0.1:12600",
+      host: "127.0.0.1:10101",
       origin: "https://drive.example",
       "sec-fetch-site": "same-origin"
     }

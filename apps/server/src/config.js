@@ -38,6 +38,7 @@ export function loadConfig() {
     uploadMaxTempBytes: numberEnv("UPLOAD_MAX_TEMP_BYTES", 200 * 1024 * 1024 * 1024),
     uploadMaxTasksPerSession: numberEnv("UPLOAD_MAX_TASKS_PER_SESSION", 20),
     uploadTaskTtlSeconds: numberEnv("UPLOAD_TASK_TTL_SECONDS", 7 * 24 * 60 * 60),
+    httpRequestTimeoutMs: numberEnv("HTTP_REQUEST_TIMEOUT_MS", 30 * 60 * 1000),
     shareTokenTtlSeconds: numberEnv("SHARE_TOKEN_TTL_SECONDS", 24 * 60 * 60),
     shareTokenMaxTtlSeconds: numberEnv("SHARE_TOKEN_MAX_TTL_SECONDS", 7 * 24 * 60 * 60),
     shareMaxActivePerUser: numberEnv("SHARE_MAX_ACTIVE_PER_USER", 100),

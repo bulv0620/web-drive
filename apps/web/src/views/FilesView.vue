@@ -417,7 +417,7 @@ import {
   Upload,
   X
 } from "@lucide/vue";
-import { api, checkSession } from "../api/client.js";
+import { api, checkSession, isRetryableUploadError } from "../api/client.js";
 import FilePreviewOverlay from "../components/FilePreviewOverlay.vue";
 import FileIcon from "../components/FileIcon.vue";
 import { dateLocale, locale, localeToggleLabel, t, toggleLocale, uiError } from "../i18n.js";
@@ -457,7 +457,11 @@ const initial = computed(() => accountName.value.slice(0, 1).toUpperCase());
 const languageIcon = computed(() => (locale.value === "zh-CN" ? Languages : ALargeSmall));
 const uploadConcurrency = 3;
 const uploadChunkConcurrency = 3;
+const uploadChunkMaxAttempts = 3;
+const uploadChunkRetryBaseDelayMs = 800;
 const uploadQueue = [];
+const uploadChunkWaiters = [];
+let activeUploadChunks = 0;
 const dateTimeFormatter = computed(() => new Intl.DateTimeFormat(dateLocale.value, { dateStyle: "medium", timeStyle: "short" }));
 const uploadTaskFiles = new Map();
 let uploadRefreshTimer = null;
@@ -1230,7 +1234,7 @@ async function uploadMissingChunks(file, task, uploaded) {
         const start = index * chunkSize.value;
         const end = Math.min(file.size, start + chunkSize.value);
         try {
-          await api.uploadChunk(task.uploadId, index, file.slice(start, end), { signal: task.abortController.signal });
+          await uploadChunkWithRetry(task, index, file.slice(start, end));
         } catch (err) {
           if (task.cancelRequested || task.status === "canceled" || err?.name === "AbortError") return;
           firstError = firstError || err;
@@ -1248,6 +1252,74 @@ async function uploadMissingChunks(file, task, uploaded) {
   );
 
   if (firstError) throw firstError;
+}
+
+async function acquireUploadChunkSlot(signal) {
+  if (signal?.aborted) throw abortError();
+  if (activeUploadChunks < uploadChunkConcurrency) {
+    activeUploadChunks += 1;
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    const waiter = { resolve, reject, signal, onAbort: null };
+    waiter.onAbort = () => {
+      const index = uploadChunkWaiters.indexOf(waiter);
+      if (index >= 0) uploadChunkWaiters.splice(index, 1);
+      reject(abortError());
+    };
+    signal?.addEventListener("abort", waiter.onAbort, { once: true });
+    uploadChunkWaiters.push(waiter);
+  });
+}
+
+function releaseUploadChunkSlot() {
+  while (uploadChunkWaiters.length) {
+    const waiter = uploadChunkWaiters.shift();
+    waiter.signal?.removeEventListener("abort", waiter.onAbort);
+    if (waiter.signal?.aborted) continue;
+    waiter.resolve();
+    return;
+  }
+  activeUploadChunks = Math.max(0, activeUploadChunks - 1);
+}
+
+async function uploadChunkWithRetry(task, index, blob) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= uploadChunkMaxAttempts; attempt += 1) {
+    if (task.cancelRequested || task.status === "canceled" || task.abortController?.signal.aborted) throw abortError();
+    await acquireUploadChunkSlot(task.abortController.signal);
+    try {
+      if (task.status === "paused" || task.status === "pausing") throw abortError();
+      return await api.uploadChunk(task.uploadId, index, blob, { signal: task.abortController.signal });
+    } catch (error) {
+      lastError = error;
+      if (attempt >= uploadChunkMaxAttempts || !isRetryableUploadError(error)) throw error;
+    } finally {
+      releaseUploadChunkSlot();
+    }
+    await abortableDelay(uploadChunkRetryBaseDelayMs * 2 ** (attempt - 1), task.abortController.signal);
+  }
+  throw lastError;
+}
+
+function abortableDelay(milliseconds, signal) {
+  if (signal?.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function abortError() {
+  return new DOMException("The operation was aborted", "AbortError");
 }
 
 function uploadedBytesFromChunks(task, uploaded) {
