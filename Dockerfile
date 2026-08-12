@@ -28,6 +28,6 @@ RUN mkdir -p /data/uploads-temp && chown -R node:node /data
 
 USER node
 
-EXPOSE 12600
+EXPOSE 10101
 
 CMD ["npm", "run", "server"]

@@ -1,24 +1,25 @@
 services:
   web-drive:
     build:
-      context: ../..
+      context: .
       dockerfile: Dockerfile
     container_name: web-drive
     restart: unless-stopped
     user: "${WEB_DRIVE_UID:-1000}:${WEB_DRIVE_GID:-1000}"
     env_file:
-      - ../../.env
+      - .env
     environment:
       HOST: 0.0.0.0
-      PORT: ${PORT:-12600}
+      PORT: ${PORT:-10101}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       UPLOAD_TEMP_DIR: /data/uploads-temp
+      HTTP_REQUEST_TIMEOUT_MS: ${HTTP_REQUEST_TIMEOUT_MS:-1800000}
     ports:
-      - "${PUBLISH_HOST:-127.0.0.1}:${PORT:-12600}:${PORT:-12600}"
+      - "${PUBLISH_HOST:-127.0.0.1}:${PORT:-10101}:${PORT:-10101}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ${UPLOAD_TEMP_HOST_DIR:-../../data/uploads-temp}:/data/uploads-temp
+      - ${UPLOAD_TEMP_HOST_DIR:-./data/uploads-temp}:/data/uploads-temp
     read_only: true
     tmpfs:
       - /tmp

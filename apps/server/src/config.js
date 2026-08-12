@@ -26,7 +26,7 @@ function normalizeShare(raw) {
 export function loadConfig() {
   return {
     host: process.env.HOST || "127.0.0.1",
-    port: numberEnv("PORT", 12600),
+    port: numberEnv("PORT", 10101),
     baseUrl: process.env.BASE_URL || "/",
     smbShare: normalizeShare(process.env.SMB_SHARE || ""),
     smbDomain: process.env.SMB_DOMAIN || "",
