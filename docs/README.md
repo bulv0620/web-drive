@@ -28,6 +28,7 @@
 | Implementing | 正在实施，验收尚未完成 |
 | Implemented | 代码已完成并通过仓库内自动验证 |
 | Verified | 已通过目标部署环境或真实 SMB/NAS 验证 |
+| Archived | 交付已结束并转为历史记录；未完成的环境验证继续由 OPS 检查表跟踪 |
 | Superseded | 已被另一份文档替代，必须链接替代文档 |
 | Living / Active | 持续维护的基线或检查表，不以一次性交付结束 |
 

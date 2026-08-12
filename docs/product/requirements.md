@@ -66,7 +66,7 @@ WebDrive 是一个以 SMB 共享为存储和最终权限边界的 Web 文件管�
 - 分片流式写入本地临时目录，校验后登记为 `.part`。
 - 完成时顺序读取分片，通过单个 SMB write stream 写入目标路径。
 
-详细设计和环境验收见 [SPEC-001](../specs/spec-001-upload-reliability.md)。
+详细设计和环境验收见已归档的 [SPEC-001](../specs/archive/spec-001-upload-reliability.md)。
 
 ### 5.4 下载、分享与预览
 

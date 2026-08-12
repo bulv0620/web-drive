@@ -94,7 +94,7 @@ init metadata
 - 临时空间在接收前预留，失败时释放。
 - SMB 写入成功前保留本地完整分片，以便重试完成阶段。
 
-远端最终路径目前沿用 SMB 客户端的覆盖写语义。通过远端临时文件与原子重命名避免半成品，需要真实 NAS 专项验证，见 [SPEC-001](../specs/spec-001-upload-reliability.md)。
+远端最终路径目前沿用 SMB 客户端的覆盖写语义。通过远端临时文件与原子重命名避免半成品，需要真实 NAS 专项验证，见已归档的 [SPEC-001](../specs/archive/spec-001-upload-reliability.md)。
 
 ## 7. 下载与预览数据流
 
